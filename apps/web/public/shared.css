@@ -1,0 +1,27 @@
+.shared-main, .shared-fields { display: grid; gap: 15px; }
+.shared-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.shared-panel { padding: 17px 18px; }
+.shared-panel > .panel-heading { align-items: center; padding-bottom: 7px; }
+.shared-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 0; }
+.shared-row + .shared-row { border-top: 1px solid var(--border); }
+.shared-row-text { min-width: 0; overflow-wrap: anywhere; }
+.shared-row-text p { font-size: .85rem; }
+.shared-row-actions, .shared-tags { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
+.shared-row-actions { flex: 0 0 auto; justify-content: end; }
+.shared-tags { margin-top: 6px; }
+.shared-breakdown { margin-top: 5px; font-size: .85rem; color: var(--muted); }
+.shared-payment-amounts { display: flex; flex-wrap: wrap; gap: 6px 20px; margin: 8px 0 4px; }
+.shared-payment-amounts dt { font-size: .8rem; }
+.shared-payment-amounts dd { margin: 0; font-size: .92rem; font-weight: 650; font-variant-numeric: tabular-nums; }
+.shared-members { display: grid; gap: 8px; min-width: 0; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.shared-members legend { padding: 0 5px; font-weight: 600; }
+.shared-member { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.shared-choice { display: flex; align-items: center; gap: 7px; font-weight: 570; padding: 3px 0; overflow-wrap: anywhere; }
+.shared-form-note { font-size: .85rem; }
+@media (max-width: 620px) {
+  .shared-summary { grid-template-columns: 1fr; gap: 8px; }
+  .shared-summary .metric { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+  .shared-summary .metric-value { margin: 0; }
+  .shared-row { align-items: flex-start; flex-direction: column; gap: 5px; }
+  .shared-row-actions { justify-content: start; }
+}

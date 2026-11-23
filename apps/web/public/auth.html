@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="description" content="Sign in to Quant Financial Planner.">
+  <title>Sign in · Quant Financial Planner</title>
+  <link rel="icon" href="/icons.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/dashboard.css">
+  <link rel="stylesheet" href="/auth.css">
+  <script type="module" src="/auth.js"></script>
+</head>
+<body class="auth-page">
+  <main id="auth-view" class="auth-layout">
+    <div class="auth-card panel">
+      <div class="auth-brand brand">
+        <span class="brand-mark"><svg class="icon" aria-hidden="true"><use href="/icons.svg#brand"></use></svg></span>
+        <span><strong>Quant</strong><small>Financial planner</small></span>
+      </div>
+      <h1 id="auth-heading">Sign in</h1>
+      <p id="auth-description" class="muted" role="status">Checking account access…</p>
+      <p id="auth-error" class="notice" role="alert" hidden></p>
+      <form id="auth-form" class="auth-fields" method="post" action="/auth" aria-labelledby="auth-heading" hidden>
+        <label class="field" id="auth-invitation" hidden><span>Invitation code</span>
+          <input name="code" type="password" autocomplete="off" spellcheck="false" autocapitalize="off" disabled>
+        </label>
+        <label class="field" id="auth-setup-code" hidden><span>Setup code</span>
+          <input name="setup_code" type="password" autocomplete="off" spellcheck="false" autocapitalize="off" disabled>
+        </label>
+        <label class="field"><span>Username</span>
+          <input name="username" type="text" autocomplete="username" spellcheck="false" autocapitalize="off" required>
+        </label>
+        <label class="field"><span>Password</span>
+          <input name="password" type="password" autocomplete="current-password" required>
+        </label>
+        <label class="field" id="auth-confirmation" hidden><span>Confirm password</span>
+          <input name="confirmation" type="password" autocomplete="new-password" disabled>
+        </label>
+        <label class="workspace-check" id="auth-starter-categories" hidden>
+          <input name="starter_categories" type="checkbox" disabled>
+          <span>Add starter categories <small class="muted">such as Employment, Groceries, and Index funds</small></span>
+        </label>
+        <button id="auth-submit" class="primary" type="submit">Sign in</button>
+      </form>
+      <div id="auth-options" class="auth-options" hidden>
+        <button id="auth-register" class="text-button" type="button" hidden>Create an account</button>
+        <button id="auth-alternate" class="text-button" type="button">Accept an invitation</button>
+      </div>
+      <button id="auth-retry" class="secondary" type="button" hidden>Retry</button>
+      <noscript><p class="notice">Enable JavaScript to sign in.</p></noscript>
+    </div>
+  </main>
+</body>
+</html>

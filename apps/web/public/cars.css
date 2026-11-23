@@ -1,0 +1,542 @@
+.car-main,
+.car-content,
+.car-health-sidebar {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.car-profile {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 15px 18px;
+}
+
+.car-profile-name {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.car-profile-name h2 { font-size: 1.25rem; }
+.car-profile-name p { margin-top: 3px; font-size: .83rem; }
+
+.car-profile-icon {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 43px;
+  height: 43px;
+  border-radius: 11px;
+  background: var(--primary-pale);
+  color: var(--primary-dark);
+}
+
+.car-profile-icon .icon { width: 24px; height: 24px; }
+
+.car-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+#car-picker { width: min(205px, 47vw); }
+
+.car-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 0 15px;
+  border-bottom: 1px solid var(--border);
+}
+
+.car-tabs button {
+  min-height: 42px;
+  margin-bottom: -1px;
+  padding: 4px 9px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.car-tabs button:hover, .car-tabs button[aria-pressed="true"] {
+  color: var(--primary-dark);
+}
+
+.car-tabs button[aria-pressed="true"] { border-color: var(--primary); }
+
+.car-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.car-metrics .metric:first-child {
+  background: linear-gradient(145deg, #f9f7ff, var(--surface) 76%);
+  border-color: #e6dffc;
+}
+
+.car-panel { padding: clamp(12px, 2vw, 19px); }
+.car-panel-heading { align-items: center; flex-wrap: wrap; }
+.car-empty .empty { min-height: 255px; }
+.car-empty-row { padding: 19px 0 2px; }
+
+.car-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 15px 0 0;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: #f7f8fc;
+}
+
+.car-stat-grid > div { padding: 12px 13px; overflow-wrap: anywhere; }
+.car-stat-grid > div + div { border-inline-start: 1px solid var(--border); }
+.car-stat-grid dt { color: var(--muted); font-size: .84rem; }
+.car-stat-grid dd { margin: 3px 0 0; font-size: 1.1rem; font-weight: 680; font-variant-numeric: tabular-nums; }
+.car-panel .table-scroll { margin-top: 13px; }
+.car-table td { vertical-align: middle; }
+.car-table td:first-child { white-space: nowrap; }
+.car-table td:last-child { width: 1%; }
+.car-table .car-actions { flex-wrap: nowrap; }
+.car-table tfoot { background: var(--subtle); }
+.car-table tfoot th, .car-table tfoot td { font-weight: 680; border-top: 1px solid var(--border); }
+.car-cost-name.text-button { justify-content: flex-start; min-height: auto; width: fit-content; padding: 0; }
+.car-cost-coverage { margin-top: 10px; font-size: .84rem; }
+.car-row-detail { display: grid; gap: 2px; min-width: 108px; overflow-wrap: anywhere; }
+.car-row-detail small { font-size: .82rem; white-space: pre-wrap; }
+.car-overdue { color: #992a43; font-weight: 640; }
+.car-history-more { margin-top: 13px; }
+
+.car-dialog .notice { margin: 11px 0 0; }
+.car-dialog .dialog-actions { justify-content: flex-end; }
+.car-dialog textarea { resize: vertical; }
+.car-destructive { justify-self: start; color: var(--negative); }
+
+.car-equipment {
+  margin: 0;
+  padding: 9px 11px 10px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+
+.car-equipment legend { padding: 0 5px; font-size: .87rem; font-weight: 640; }
+.car-sharing-help { margin-bottom: 9px; font-size: .83rem; }
+.car-assignment-types { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(145px, 100%), 1fr)); gap: 10px; }
+.car-assignment-types h3 { margin-bottom: 4px; font-size: .86rem; }
+.car-assignment-types label { overflow-wrap: anywhere; }
+.car-checkbox, .car-radio { display: flex; width: fit-content; align-items: center; gap: 7px; cursor: pointer; }
+.car-checkbox + .car-checkbox { margin-top: 5px; }
+.car-checkbox input, .car-radio input { margin: 0; accent-color: var(--primary); }
+.car-tank, .car-import-guide { display: grid; gap: 4px; }
+.car-import-guide pre { margin: 5px 0; padding: 9px; border-radius: 7px; background: var(--subtle); }
+
+.car-health {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 14px;
+}
+
+.car-views { margin: 13px 0; max-width: 100%; flex-wrap: wrap; }
+
+.car-condition-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+  margin: 14px 0;
+}
+
+.car-condition-summary > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  column-gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fafafe;
+}
+
+.car-condition-summary dd { margin: 0; font-weight: 680; }
+.car-health-total {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 5px 12px;
+  padding-top: 11px;
+  border-top: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+
+.car-health-total + p { margin-top: 5px; font-size: .83rem; }
+.car-health-sidebar .field { margin-top: 13px; }
+.car-part-detail { display: flex; align-items: center; flex-wrap: wrap; gap: 7px 10px; margin: 13px 0; }
+.car-part-detail > p { width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
+.car-condition-choices { display: flex; flex-wrap: wrap; gap: 7px 12px; }
+
+.car-condition, .car-marker {
+  --condition-color: #58647b;
+  --condition-background: #edf0f6;
+  --condition-dot: #7d8aa2;
+}
+
+[data-condition="good"] {
+  --condition-color: #14654b;
+  --condition-background: #e6f6ed;
+  --condition-dot: #249365;
+}
+
+[data-condition="watch"] {
+  --condition-color: #795003;
+  --condition-background: #fff2c8;
+  --condition-dot: #d29a18;
+}
+
+[data-condition="repair"] {
+  --condition-color: #a02d45;
+  --condition-background: #fce8ed;
+  --condition-dot: #cf4863;
+}
+
+.car-condition {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  padding: 3px 6px;
+  border-radius: 5px;
+  color: var(--condition-color);
+  background: var(--condition-background);
+  font-size: .78rem;
+  line-height: 1.2;
+  font-weight: 660;
+}
+
+.car-condition::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: var(--condition-dot);
+}
+
+.car-diagram-box {
+  display: grid;
+  min-width: 0;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid #e1e4f0;
+  border-radius: 11px;
+  background:
+    radial-gradient(ellipse at center, #f6f5ff 10%, transparent 73%),
+    radial-gradient(circle at center, #d7dbea 1px, transparent 1px) 0 0 / 17px 17px,
+    #f8f9fd;
+}
+
+.car-diagram {
+  position: relative;
+  width: min(100%, 345px);
+  aspect-ratio: 1 / 1.14;
+  isolation: isolate;
+}
+
+.car-drawing { position: absolute; inset: 0; pointer-events: none; }
+.car-drawing > span { position: absolute; display: block; }
+
+.car-marker {
+  position: absolute;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: clamp(24px, 4vw, 30px);
+  height: clamp(24px, 4vw, 30px);
+  padding: 0;
+  transform: translate(-50%, -50%);
+  border: 1px solid #cfd4e3;
+  border-radius: 100%;
+  background: #fff;
+  box-shadow: 0 2px 5px #222a5030;
+}
+
+.car-marker::before {
+  content: "";
+  width: 43%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: var(--condition-dot);
+}
+
+.car-marker:hover, .car-marker[aria-pressed="true"] {
+  z-index: 2;
+  border: 1px solid var(--primary);
+  box-shadow: 0 0 0 3px #5546e73b, 0 2px 8px #222a5037;
+}
+
+.car-diagram .wheel {
+  width: 9.5%;
+  height: 16%;
+  border: 1px solid #414b67;
+  border-radius: 22%;
+  background: repeating-linear-gradient(0deg, #46516d 0 3px, #333d58 3px 6px);
+}
+
+.car-diagram .wheel-fl, .car-diagram .wheel-rl { left: 23%; }
+.car-diagram .wheel-fr, .car-diagram .wheel-rr { right: 23%; }
+.car-diagram .wheel-fl, .car-diagram .wheel-fr { top: 23%; }
+.car-diagram .wheel-rl, .car-diagram .wheel-rr { bottom: 22%; }
+
+.car-diagram .shell {
+  inset: 8% 27% 7%;
+  border: 2px solid #677498;
+  border-radius: 27% 27% 25% 25% / 12% 12% 9% 9%;
+  box-shadow: 0 15px 20px #32396b22, inset 0 0 0 2px #ffffff8a;
+  background: linear-gradient(90deg, #aab8de, #d3ddf6 15%, #eef1fc 51%, #d6dff7 85%, #9faed9);
+}
+
+.car-diagram[data-view-kind="exterior"] .bonnet,
+.car-diagram[data-view-kind="exterior"] .trunk {
+  left: 34%;
+  width: 32%;
+  border: 1px solid #8799bf;
+  background: linear-gradient(90deg, #bbc9ea, #e3eafb 48%, #bccaea);
+}
+
+.car-diagram .bonnet { top: 15%; height: 17.5%; border-radius: 22% 22% 13% 13%; }
+.car-diagram .trunk { bottom: 12%; height: 13%; border-radius: 12% 12% 22% 22%; }
+.car-diagram .spare {
+  top: 70%;
+  left: 43%;
+  width: 14%;
+  aspect-ratio: 1;
+  border: 2px dashed #8595b6;
+  border-radius: 50%;
+  background: #b0bed9aa;
+}
+
+.car-diagram .glass-front, .car-diagram .glass-back {
+  left: 32%;
+  width: 36%;
+  height: 13%;
+  background: linear-gradient(140deg, #566b98 14%, #7189b4 41%, #9eb0d1 42%, #556a98 78%);
+  border: 1px solid #52668f;
+}
+
+.car-diagram .glass-front { top: 32.5%; border-radius: 27% 27% 4% 4%; }
+.car-diagram .glass-back { bottom: 24.5%; border-radius: 4% 4% 19% 19%; }
+.car-diagram .roof {
+  inset: 44% 37% 35.5%;
+  border: 1px solid #8193bb;
+  border-radius: 17%;
+  background: linear-gradient(100deg, #a0b3db, #dce5f9 65%, #a7b5d9);
+  box-shadow: -7px 0 0 #62769e, 7px 0 0 #62769e, inset 0 0 0 2px #dfebfc8c;
+}
+
+.car-diagram .mirror {
+  top: 40%;
+  width: 7%;
+  height: 4%;
+  border: 1px solid #637299;
+  border-radius: 40% 22%;
+  background: #becdec;
+}
+
+.car-diagram .mirror-left { left: 22%; transform: rotate(-20deg); }
+.car-diagram .mirror-right { right: 22%; transform: rotate(20deg); }
+
+.car-diagram .light {
+  width: 12%;
+  height: 4%;
+  border: 1px solid #8395ae;
+  border-radius: 30%;
+  background: linear-gradient(0deg, #a0b0cd, #f8faff 74%);
+}
+
+.car-diagram .light-fl, .car-diagram .light-rl { left: 28%; transform: rotate(-22deg); }
+.car-diagram .light-fr, .car-diagram .light-rr { right: 28%; transform: rotate(22deg); }
+.car-diagram .light-fl, .car-diagram .light-fr { top: 15%; }
+.car-diagram .light-rl, .car-diagram .light-rr {
+  bottom: 13%;
+  border-color: #9e5b74;
+  background: #dea7ba;
+}
+
+.car-diagram[data-view-kind="engine"] .shell {
+  inset: 13% 15% 15%;
+  border-radius: 19% 19% 14% 14% / 14% 14% 9% 9%;
+  background: radial-gradient(ellipse at center, #c2cce6, #e1e6f4);
+}
+
+.car-diagram .cooler {
+  inset: 16% 29% 72%;
+  border: 1px solid #69748e;
+  border-radius: 5px;
+  background: repeating-linear-gradient(90deg, #7786a8 0 3px, #9faecb 3px 5px);
+}
+
+.car-diagram .fan {
+  top: 22%;
+  width: 13%;
+  aspect-ratio: 1;
+  border: 2px solid #65789e;
+  border-radius: 100%;
+  background: conic-gradient(#687ca2 0 45deg, #b5c2df 45deg 90deg, #687ca2 90deg 135deg, #b5c2df 135deg 180deg, #687ca2 180deg 225deg, #b5c2df 225deg 270deg, #687ca2 270deg 315deg, #b5c2df 315deg);
+  box-shadow: inset 0 0 0 4px #d0d9ed;
+}
+
+.car-diagram .fan-left { left: 33%; }
+.car-diagram .fan-right { right: 33%; }
+
+.car-diagram .intake, .car-diagram .battery, .car-diagram .reservoir {
+  width: 14%;
+  border: 1px solid #6a7a9d;
+  border-radius: 7px;
+}
+
+.car-diagram .intake {
+  inset: 34% auto 43% 20%;
+  background: repeating-linear-gradient(0deg, #8193b4 0 5px, #a5b3ce 5px 8px);
+}
+
+.car-diagram .battery {
+  inset: 34% 18% 48% auto;
+  background: linear-gradient(90deg, #a5b1c8 20%, #687895 22% 78%, #adb9d0 80%);
+  box-shadow: inset 0 0 0 3px #8797b7;
+}
+
+.car-diagram .hose {
+  inset: 38% 25% 26%;
+  border: 6px solid #869abc;
+  border-top: 0;
+  border-radius: 0 0 34% 34% / 0 0 27% 27%;
+}
+
+.car-diagram .motor {
+  inset: 35% 34% 37%;
+  border: 2px solid #64759a;
+  border-radius: 12%;
+  background: repeating-linear-gradient(90deg, #adbbd9 0 11%, #899bbe 12% 14%, #b9c6e1 15% 18%);
+  box-shadow: 0 5px 9px #323a6060, inset 0 0 0 4px #dbe3f3;
+}
+
+.car-diagram .belt {
+  inset: 60% 44% 23% 30%;
+  border: 5px solid #677898;
+  border-radius: 45%;
+  background: radial-gradient(circle at 28% 55%, #697999 0 19%, transparent 22%), radial-gradient(circle at 71% 45%, #697999 0 15%, #bcc8e1 18%);
+}
+
+.car-diagram .reservoir { inset: 63% 19% 23% auto; background: #e0e8f7; }
+.car-diagram .turbo {
+  inset: 64% 31% 24% 55%;
+  border: 2px solid #7685a8;
+  border-radius: 50%;
+  background: radial-gradient(circle, #7385a8 20%, #b0c0dd 22% 35%, #f0f4fc 38% 52%, #879abd 55%);
+}
+
+.car-diagram[data-view-kind="underbody"] .shell {
+  background: linear-gradient(90deg, #a4b3d2, #d6deef 15% 85%, #a4b3d2);
+}
+
+.car-diagram .rail {
+  inset: 17% auto 15%;
+  width: 6%;
+  border: 1px solid #8191b3;
+  background: #a0b0d1;
+  border-radius: 6px;
+}
+
+.car-diagram .rail-left { left: 32%; }
+.car-diagram .rail-right { right: 32%; }
+
+.car-diagram .axle {
+  left: 27%;
+  width: 46%;
+  height: 7.5%;
+  border: 1px solid #7485a9;
+  border-radius: 12% 12% 17% 17%;
+  background: linear-gradient(180deg, #8294b8, #abbbda 49%, #8193b8);
+}
+
+.car-diagram .axle-front { top: 24%; }
+.car-diagram .axle-rear { bottom: 22%; }
+
+.car-diagram .shaft {
+  inset: 30% 48.5% 26%;
+  border: 1px solid #687c9e;
+  border-radius: 5px;
+  background: #a8b9d9;
+}
+
+.car-diagram .transmission, .car-diagram .transfer-case, .car-diagram .front-diff, .car-diagram .rear-diff {
+  border: 1px solid #657797;
+  border-radius: 19%;
+  background: linear-gradient(135deg, #99acce, #c2cde3 48%, #8195ba);
+}
+
+.car-diagram .transmission { inset: 27% 41% 58%; }
+.car-diagram .transfer-case { inset: 39% 42% 49%; }
+.car-diagram .front-diff { inset: 17% 43% 75%; }
+.car-diagram .rear-diff { inset: 65% 42% 22%; }
+
+.car-diagram .exhaust {
+  inset: 39% 34% 14% 60%;
+  border: 3px solid #8094ae;
+  border-radius: 45% 0 25% 0;
+  border-bottom: 0;
+  border-left: 0;
+}
+
+.car-diagram .silencer {
+  inset: 63% 31% 19% 61%;
+  border: 1px solid #7789a5;
+  background: #b4c1d8;
+  border-radius: 5px;
+}
+
+.car-diagram .tow {
+  inset: 84% 44% 8%;
+  border: 3px solid #6e7da1;
+  border-radius: 5px 5px 50% 50%;
+  background: #9dacc8;
+}
+
+.car-diagram[data-drive="fwd"] :is(.shaft, .rear-diff),
+.car-diagram[data-drive="rwd"] .front-diff,
+.car-diagram:not([data-drive="4wd"]) .transfer-case,
+.car-diagram:not([data-equipment~="spare"]) .spare,
+.car-diagram:not([data-equipment~="turbo"]) .turbo,
+.car-diagram:not([data-equipment~="tow_hitch"]) .tow {
+  display: none;
+}
+
+@media (max-width: 990px) {
+  .car-health { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); }
+  .car-condition-summary { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 780px) {
+  .car-health { grid-template-columns: minmax(0, 1fr); }
+  .car-health-sidebar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .car-condition-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 560px) {
+  .car-health-sidebar, .car-metrics { grid-template-columns: minmax(0, 1fr); }
+  .car-stat-grid { grid-template-columns: minmax(0, 1fr); }
+  .car-stat-grid > div + div { border-inline-start: 0; border-top: 1px solid var(--border); }
+  .car-tabs { column-gap: 7px; }
+  .car-tabs button { padding-inline: 5px; font-size: .88rem; }
+  .car-profile { padding: 12px; }
+}

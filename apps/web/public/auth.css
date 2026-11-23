@@ -1,0 +1,114 @@
+.auth-page {
+  background: var(--page);
+}
+
+.auth-layout {
+  display: grid;
+  justify-items: center;
+  align-items: start;
+  min-height: 100dvh;
+  padding: clamp(26px, 12vh, 118px) 18px 30px;
+}
+
+.auth-card {
+  width: min(100%, 430px);
+  display: grid;
+  gap: 10px;
+  padding: clamp(20px, 5vw, 30px);
+  border-top: 3px solid var(--primary);
+}
+
+.auth-brand {
+  padding: 0;
+  margin: 0 0 12px;
+}
+
+.auth-card h1 {
+  font-size: clamp(1.8rem, 6vw, 2.25rem);
+}
+
+.auth-card .notice {
+  margin: 3px 0 0;
+}
+
+.auth-fields {
+  display: grid;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.auth-fields > .primary {
+  margin-top: 4px;
+}
+
+.auth-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  margin-inline: -7px;
+}
+
+.auth-card > .secondary {
+  width: fit-content;
+  margin-top: 1px;
+}
+
+.auth-menu {
+  position: relative;
+}
+
+.auth-menu > summary {
+  cursor: pointer;
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 15rem;
+  white-space: nowrap;
+}
+
+.auth-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.auth-menu-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.auth-menu-actions {
+  position: absolute;
+  z-index: 20;
+  inset-inline-end: 0;
+  top: calc(100% + 6px);
+  min-width: 11rem;
+  padding: 8px;
+  display: grid;
+  gap: 4px;
+}
+
+.auth-menu-actions button {
+  width: 100%;
+  text-align: start;
+  justify-content: flex-start;
+}
+
+.auth-menu .notice {
+  margin: 4px 0 0;
+  max-width: min(16rem, 70vw);
+}
+
+.auth-password-editor form {
+  display: grid;
+  gap: 11px;
+}
+
+.auth-password-editor .dialog-actions {
+  margin-top: 4px;
+}
+
+@media (max-width: 540px) {
+  .auth-menu > summary {
+    max-width: 9rem;
+  }
+}

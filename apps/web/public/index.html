@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A financial dashboard for personal and family balances, transactions, and purchase plans.">
+  <title>Overview · Quant Financial Planner</title>
+  <link rel="icon" href="/icons.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/dashboard.css">
+  <link rel="stylesheet" href="/insights.css">
+  <link rel="stylesheet" href="/forecast.css">
+  <link rel="stylesheet" href="/funding.css">
+  <link rel="stylesheet" href="/documentation.css">
+  <link rel="stylesheet" href="/goals.css">
+  <link rel="stylesheet" href="/shared.css">
+  <link rel="stylesheet" href="/decision.css">
+  <link rel="stylesheet" href="/imports.css">
+  <link rel="stylesheet" href="/budgets.css">
+  <link rel="stylesheet" href="/cars.css">
+  <link rel="stylesheet" href="/returns.css">
+  <link rel="stylesheet" href="/auth.css">
+  <link rel="stylesheet" href="/access.css">
+  <link rel="stylesheet" href="/attachments.css">
+  <link rel="stylesheet" href="/feature-help.css">
+  <script type="module" src="/dashboard.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <aside class="sidebar">
+    <a class="brand" href="#overview" aria-label="Quant Financial Planner overview">
+      <span class="brand-mark"><svg class="icon" aria-hidden="true"><use href="/icons.svg#brand"></use></svg></span>
+      <span><strong>Quant</strong><small>Financial planner</small></span>
+    </a>
+    <nav class="navigation primary-navigation" aria-label="Main navigation">
+      <a href="#overview" data-nav-group="overview"><svg class="icon" aria-hidden="true"><use href="/icons.svg#overview"></use></svg> Overview</a>
+      <a href="#transactions" data-nav-group="activity"><svg class="icon" aria-hidden="true"><use href="/icons.svg#transactions"></use></svg> Activity</a>
+      <a href="#forecast" data-nav-group="planning"><svg class="icon" aria-hidden="true"><use href="/icons.svg#calendar"></use></svg> Planning</a>
+      <a href="#cars" data-nav-group="cars"><svg class="icon" aria-hidden="true"><use href="/icons.svg#car"></use></svg> Cars</a>
+      <a href="#workspaces" data-nav-group="manage"><svg class="icon" aria-hidden="true"><use href="/icons.svg#workspace"></use></svg> Manage</a>
+      <a href="#documentation" data-nav-group="help"><svg class="icon" aria-hidden="true"><use href="/icons.svg#documentation"></use></svg> Documentation</a>
+    </nav>
+    <nav class="navigation context-navigation" aria-label="Current section">
+      <a href="#flow" data-nav="flow"><svg class="icon" aria-hidden="true"><use href="/icons.svg#flow"></use></svg> Money flow</a>
+      <a href="#insights" data-nav="insights"><svg class="icon" aria-hidden="true"><use href="/icons.svg#bar"></use></svg> Insights</a>
+      <a href="#transactions" data-nav="transactions"><svg class="icon" aria-hidden="true"><use href="/icons.svg#transactions"></use></svg> Transactions</a>
+      <a href="#imports" data-nav="imports"><svg class="icon" aria-hidden="true"><use href="/icons.svg#database"></use></svg> Import payments</a>
+      <a href="#shared" data-nav="shared"><svg class="icon" aria-hidden="true"><use href="/icons.svg#transfer"></use></svg> Shared payments</a>
+      <a href="#accounts" data-nav="accounts"><svg class="icon" aria-hidden="true"><use href="/icons.svg#wallet"></use></svg> Accounts</a>
+      <a href="#categories" data-nav="categories"><svg class="icon" aria-hidden="true"><use href="/icons.svg#tags"></use></svg> Categories</a>
+      <a href="#goals" data-nav="goals"><svg class="icon" aria-hidden="true"><use href="/icons.svg#trend"></use></svg> Goals</a>
+      <a href="#returns" data-nav="returns"><svg class="icon" aria-hidden="true"><use href="/icons.svg#income"></use></svg> Monthly returns</a>
+      <a href="#forecast" data-nav="forecast"><svg class="icon" aria-hidden="true"><use href="/icons.svg#calendar"></use></svg> Forecast</a>
+      <a href="#funding" data-nav="funding"><svg class="icon" aria-hidden="true"><use href="/icons.svg#wallet"></use></svg> Funding check</a>
+      <a href="#decision" data-nav="decision"><svg class="icon" aria-hidden="true"><use href="/icons.svg#bar"></use></svg> Decision lab</a>
+      <a href="#planner" data-nav="planner"><svg class="icon" aria-hidden="true"><use href="/icons.svg#calculator"></use></svg> Purchase planner</a>
+      <a href="#budgets" data-nav="budgets"><svg class="icon" aria-hidden="true"><use href="/icons.svg#bar"></use></svg> Group limits</a>
+      <a href="#workspaces" data-nav="workspaces"><svg class="icon" aria-hidden="true"><use href="/icons.svg#workspace"></use></svg> Workspaces</a>
+      <a href="#access" data-nav="access" hidden><svg class="icon" aria-hidden="true"><use href="/icons.svg#workspace"></use></svg> Family access</a>
+    </nav>
+    <div class="sidebar-footer">
+      <span class="storage-icon"><svg class="icon" aria-hidden="true"><use href="/icons.svg#database"></use></svg></span>
+      <div><strong>Personal &amp; family</strong><small>Saved on the server</small></div>
+    </div>
+  </aside>
+  <div class="workspace-shell">
+    <header class="topbar">
+      <label class="workspace-select"><span class="sr-only">Active workspace</span><select id="workspace-switcher" disabled><option>Personal</option></select></label>
+      <div class="topbar-actions">
+        <div id="auth-shell" hidden></div>
+        <div id="data-context" class="data-context" hidden>
+          <span id="data-mode-label" class="data-mode"><i></i><span></span></span>
+          <button id="toggle-sample" class="text-button" type="button"></button>
+        </div>
+        <button id="add-transaction" class="primary" type="button"><svg class="icon" aria-hidden="true"><use href="/icons.svg#plus"></use></svg> Add transaction</button>
+      </div>
+    </header>
+    <main id="main" class="main-content" tabindex="-1">
+      <div id="connection-error" class="notice" role="alert" hidden>
+        <span id="connection-message"></span><button id="retry-connection" class="secondary" type="button">Retry</button>
+      </div>
+      <noscript><p class="notice">Enable JavaScript to use the financial dashboard.</p></noscript>
+
+      <section id="view-overview" data-view="overview" aria-labelledby="overview-heading">
+        <div class="page-heading">
+          <div><h1 id="overview-heading">Financial overview</h1><p class="page-description" id="overview-period">Loading your dashboard…</p></div>
+          <div id="overview-controls">
+            <div id="period-filter" class="segmented period-filter" role="group" aria-label="Time horizon">
+              <button type="button" data-period="1M" aria-pressed="false">1M</button>
+              <button type="button" data-period="3M" aria-pressed="false">3M</button>
+              <button type="button" data-period="6M" aria-pressed="true">6M</button>
+              <button type="button" data-period="1Y" aria-pressed="false">1Y</button>
+              <button type="button" data-period="ALL" aria-pressed="false">All</button>
+            </div>
+          </div>
+        </div>
+        <section id="attention-panel" class="panel attention-panel" aria-labelledby="attention-heading" hidden>
+          <h2 id="attention-heading">Needs attention</h2><div id="attention-list" class="attention-list"></div>
+        </section>
+        <div id="metrics" class="metrics-grid">
+          <article class="panel metric metric-featured" data-metric="wealth">
+            <div class="metric-heading"><span class="metric-icon indigo"><svg class="icon" aria-hidden="true"><use href="/icons.svg#wallet"></use></svg></span><h2>Net worth</h2></div>
+            <p class="metric-value">—</p><p class="metric-caption">Tracked balances</p>
+          </article>
+          <article class="panel metric" data-metric="income">
+            <div class="metric-heading"><span class="metric-icon mint"><svg class="icon" aria-hidden="true"><use href="/icons.svg#income"></use></svg></span><h2>Income</h2></div>
+            <p class="metric-value">—</p><p class="metric-caption">Selected period</p>
+          </article>
+          <article class="panel metric" data-metric="expense">
+            <div class="metric-heading"><span class="metric-icon rose"><svg class="icon" aria-hidden="true"><use href="/icons.svg#expense"></use></svg></span><h2>Expenses</h2></div>
+            <p class="metric-value">—</p><p class="metric-caption">Selected period</p>
+          </article>
+          <article class="panel metric" data-metric="investment">
+            <div class="metric-heading"><span class="metric-icon violet"><svg class="icon" aria-hidden="true"><use href="/icons.svg#trend"></use></svg></span><h2>Invested</h2></div>
+            <p class="metric-value">—</p><p class="metric-caption">Contributions in period</p>
+          </article>
+        </div>
+
+        <div class="overview-grid">
+          <section class="panel trend-panel" aria-labelledby="trend-heading">
+            <div class="panel-heading trend-heading">
+              <div><h2 id="trend-heading">Financial trends</h2><p id="trend-description">Balances over time</p></div>
+              <div class="chart-controls">
+                <label class="select-label"><span class="sr-only">Chart data</span>
+                  <select id="chart-data"><option value="wealth">Wealth</option><option value="flow">Cash flow</option><option value="combined">Combined</option></select>
+                </label>
+                <div id="chart-styles" class="segmented chart-styles" role="group" aria-label="Chart style">
+                  <button type="button" data-style="line" aria-label="Line chart" title="Line chart" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="/icons.svg#line"></use></svg></button>
+                  <button type="button" data-style="bar" aria-label="Vertical bars" title="Vertical bars" aria-pressed="true"><svg class="icon" aria-hidden="true"><use href="/icons.svg#bar"></use></svg></button>
+                  <button type="button" data-style="stacked" aria-label="Stacked bars" title="Stacked bars" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="/icons.svg#stacked"></use></svg></button>
+                </div>
+              </div>
+            </div>
+            <div id="trend-empty" class="empty chart-empty" hidden>
+              <span class="empty-icon"><svg class="icon" aria-hidden="true"><use href="/icons.svg#line"></use></svg></span><strong>No balance history yet</strong>
+              <p>Add an account with an opening balance to start tracking your wealth.</p>
+            </div>
+            <div id="trend-content" hidden>
+              <div id="trend-chart" class="trend-chart" tabindex="0" aria-label="Financial trends chart. Use left and right arrows to inspect periods.">
+                <svg aria-hidden="true"></svg><div id="trend-tooltip" class="chart-tooltip" role="status" hidden></div>
+              </div>
+              <div class="chart-footer">
+                <div id="trend-legend" class="chart-legend" aria-label="Toggle chart series"></div>
+                <button id="trend-table-toggle" type="button" class="text-button" aria-expanded="false" aria-controls="trend-table">Data</button>
+              </div>
+              <div id="trend-table" class="table-scroll chart-table" hidden></div>
+            </div>
+          </section>
+          <section class="panel allocation-panel" aria-labelledby="allocation-heading">
+            <div class="panel-heading">
+              <div><h2 id="allocation-heading">Account balances</h2><p>Current allocation</p></div>
+              <a href="#accounts" class="icon-link" aria-label="View accounts" title="View accounts"><svg class="icon" aria-hidden="true"><use href="/icons.svg#arrow-up-right"></use></svg></a>
+            </div>
+            <div id="allocation" class="allocation"></div>
+          </section>
+        </div>
+
+        <div id="overview-flow">
+          <section id="flow-panel" class="panel flow-panel" aria-labelledby="map-heading">
+            <div class="panel-heading flow-heading">
+              <div><h2 id="map-heading">Flow map</h2><p>Follow the branches from each total to its transactions.</p></div>
+              <div class="flow-view-actions">
+              <div id="flow-filters" class="segmented flow-filters" role="group" aria-label="Money flow">
+                <button type="button" data-flow="all" aria-pressed="true">All flows</button>
+                <button type="button" data-flow="income" aria-pressed="false">Income</button>
+                <button type="button" data-flow="expense" aria-pressed="false">Expenses</button>
+                <button type="button" data-flow="investment" aria-pressed="false">Investments</button>
+              </div>
+              <button type="button" id="flow-reset" class="secondary">Reset view</button>
+              <button type="button" id="flow-fullscreen" class="secondary" aria-pressed="false">Fullscreen</button>
+              </div>
+            </div>
+            <div class="flow-body">
+              <div id="flow-map" class="flow-scroll" tabindex="0" aria-label="Money flow map"><div id="flow-canvas" class="flow-canvas"></div></div>
+              <div id="flow-inspector" class="flow-inspector" aria-live="polite"></div>
+            </div>
+          </section>
+        </div>
+
+        <section class="panel recent-panel" aria-labelledby="recent-heading">
+          <div class="panel-heading"><h2 id="recent-heading">Recent transactions</h2><a href="#transactions" class="text-link">View all <svg class="icon" aria-hidden="true"><use href="/icons.svg#arrow-right"></use></svg></a></div>
+          <div id="recent-transactions"></div>
+        </section>
+      </section>
+
+      <section id="view-flow" data-view="flow" aria-labelledby="flow-heading" hidden>
+        <div class="page-heading">
+          <div><h1 id="flow-heading">Money flow</h1><p id="flow-period" class="page-description"></p></div>
+          <div class="new-view-actions"><a href="#replay" class="secondary">Replay months</a><div id="flow-controls"></div></div>
+        </div>
+        <div id="standalone-flow"></div>
+      </section>
+
+      <section id="view-transactions" data-view="transactions" aria-labelledby="transactions-heading" hidden>
+        <div class="page-heading"><div><h1 id="transactions-heading">Transactions</h1><p class="page-description">Your ledger of income, expenses, investments and transfers.</p></div><a href="#imports" class="secondary">Import payments</a></div>
+        <section class="panel ledger-panel" aria-label="Transaction ledger">
+          <form id="transaction-filters" class="ledger-filters" role="search">
+            <label class="search-field"><svg class="icon" aria-hidden="true"><use href="/icons.svg#search"></use></svg><span class="sr-only">Search transactions</span><input name="search" type="search" maxlength="160" placeholder="Search names, categories or labels"></label>
+            <label class="select-label"><span class="sr-only">Transaction type</span><select name="kind"><option value="">All types</option><option value="expense">Expenses</option><option value="income">Income</option><option value="investment">Investments</option><option value="transfer">Transfers</option><option value="valuation">Value changes</option><option value="settlement">Shared settlements</option></select></label>
+            <label class="select-label"><span class="sr-only">Account filter</span><select name="account"></select></label>
+            <label class="select-label"><span class="sr-only">Category filter</span><select name="category"></select></label>
+            <button id="clear-ledger-filters" class="text-button" type="button" hidden>Clear filters</button>
+          </form>
+          <div id="ledger-period" class="ledger-period" hidden></div>
+          <div id="transaction-results" aria-live="polite"></div>
+          <div id="ledger-pagination" class="pagination" hidden>
+            <span id="ledger-page-status"></span>
+            <button id="ledger-prev" type="button" class="secondary" aria-label="Previous page"><svg class="icon" aria-hidden="true"><use href="/icons.svg#chevron-left"></use></svg></button>
+            <button id="ledger-next" type="button" class="secondary" aria-label="Next page"><svg class="icon" aria-hidden="true"><use href="/icons.svg#chevron-right"></use></svg></button>
+          </div>
+        </section>
+      </section>
+
+      <section id="view-accounts" data-view="accounts" aria-labelledby="accounts-heading" hidden>
+        <div class="page-heading">
+          <div><h1 id="accounts-heading">Accounts</h1><p class="page-description">Track checking, savings, cash and investment balances.</p></div>
+          <div class="new-view-actions">
+            <a href="#returns" class="secondary">Monthly returns</a>
+            <button type="button" id="add-cash-wallet" class="secondary">Add cash wallet</button>
+            <button type="button" id="add-account" class="primary"><svg class="icon" aria-hidden="true"><use href="/icons.svg#plus"></use></svg> Add account</button>
+          </div>
+        </div>
+        <div id="account-list" class="account-grid"></div>
+      </section>
+
+      <section id="view-categories" data-view="categories" aria-labelledby="categories-heading" hidden>
+        <div class="page-heading">
+          <div><h1 id="categories-heading">Categories</h1><p class="page-description">Group transactions into categories and subcategories for the flow map.</p></div>
+          <div class="new-view-actions">
+            <button type="button" id="add-starter-categories" class="secondary">Add starter categories</button>
+            <button type="button" id="add-category" class="primary"><svg class="icon" aria-hidden="true"><use href="/icons.svg#plus"></use></svg> Add category</button>
+          </div>
+        </div>
+        <div id="category-list" class="category-grid"></div>
+      </section>
+
+      <section id="view-replay" data-view="replay" aria-label="Money flow replay" hidden></section>
+      <section id="view-insights" data-view="insights" aria-label="Financial insights" hidden></section>
+      <section id="view-shared" data-view="shared" aria-label="Shared payments" hidden></section>
+      <section id="view-goals" data-view="goals" aria-label="Goals" hidden></section>
+      <section id="view-returns" data-view="returns" aria-label="Monthly returns" hidden></section>
+      <section id="view-forecast" data-view="forecast" aria-label="Forecast" hidden></section>
+      <section id="view-funding" data-view="funding" aria-label="Funding check" hidden></section>
+      <section id="view-decision" data-view="decision" aria-label="Decision lab" hidden></section>
+      <section id="view-workspaces" data-view="workspaces" aria-label="Workspaces" hidden></section>
+      <section id="view-access" data-view="access" aria-label="Family access" hidden></section>
+      <section id="view-budgets" data-view="budgets" aria-label="Group limits" hidden></section>
+      <section id="view-cars" data-view="cars" aria-label="Cars" hidden></section>
+      <section id="view-imports" data-view="imports" aria-label="Import payments" hidden></section>
+      <section id="view-documentation" data-view="documentation" aria-label="Documentation" hidden></section>
+
+      <section id="view-planner" data-view="planner" aria-labelledby="planner-heading" hidden>
+        <div class="page-heading"><div><h1 id="planner-heading">Purchase planner</h1><p class="page-description">Compare funding schedules for a future purchase.</p></div></div>
+    <div class="planner-grid">
+      <form id="scenario-form" class="panel scenario" novalidate aria-labelledby="scenario-heading">
+        <h2 id="scenario-heading">Scenario</h2>
+        <button type="button" id="use-ledger" class="secondary">Use ledger balances</button>
+        <p class="muted planner-note">Uses cash and savings and the average change in liquid balances over the last three complete months.</p>
+        <fieldset>
+          <legend>Cash position</legend>
+          <div class="field-grid">
+            <div class="field">
+              <label for="startingMonth">Starting month</label>
+              <input id="startingMonth" name="startingMonth" type="month" placeholder="YYYY-MM" required>
+            </div>
+            <div class="field">
+              <label for="startingCash">Starting cash</label>
+              <div class="money-input"><span aria-hidden="true">€</span><input id="startingCash" name="startingCash" aria-label="Starting cash in euros" inputmode="decimal" required></div>
+            </div>
+            <div class="field">
+              <label for="monthlyNetCashFlow">Monthly net cash flow</label>
+              <div class="money-input"><span aria-hidden="true">€</span><input id="monthlyNetCashFlow" name="monthlyNetCashFlow" aria-label="Monthly net cash flow in euros" inputmode="decimal" required></div>
+            </div>
+            <div class="field">
+              <label for="minimumReserve">Minimum reserve</label>
+              <div class="money-input"><span aria-hidden="true">€</span><input id="minimumReserve" name="minimumReserve" aria-label="Minimum reserve in euros" inputmode="decimal" required></div>
+            </div>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Purchase</legend>
+          <div class="field-grid">
+            <div class="field">
+              <label for="purchasePrice">Purchase price</label>
+              <div class="money-input"><span aria-hidden="true">€</span><input id="purchasePrice" name="purchasePrice" aria-label="Purchase price in euros" inputmode="decimal" required></div>
+            </div>
+            <div class="field">
+              <label for="dueMonth">Due month</label>
+              <input id="dueMonth" name="dueMonth" type="month" placeholder="YYYY-MM" required>
+            </div>
+          </div>
+        </fieldset>
+        <div class="form-actions">
+          <button type="submit" class="primary">Compare plans</button>
+          <button type="button" id="load-example" class="secondary">Load example</button>
+          <button type="button" id="planner-check-funding" class="secondary">Check funding</button>
+          <button type="button" id="save-scenario" class="secondary" disabled>Save comparison</button>
+        </div>
+      </form>
+      <section class="panel saved-panel" aria-labelledby="saved-heading">
+        <div class="panel-heading">
+          <h2 id="saved-heading">Saved comparisons</h2>
+          <button type="button" id="new-scenario" class="text-button">New</button>
+        </div>
+        <div id="saved-scenarios"></div>
+      </section>
+
+      <section class="results" aria-labelledby="results-heading">
+        <div class="results-header">
+          <h2 id="results-heading">Funding plans</h2>
+          <p id="result-status" role="status"></p>
+        </div>
+        <div id="result-message" class="panel message" role="status">
+          <h3 id="message-title">Loading the purchase planner</h3>
+          <p id="message-detail" hidden></p>
+          <noscript>Enable JavaScript to compare funding plans.</noscript>
+        </div>
+        <div id="projection-results" class="projection-results" hidden>
+          <div id="plan-cards" class="plan-cards" role="group" aria-label="Select a funding plan"></div>
+          <section class="panel chart-panel" aria-labelledby="chart-title">
+            <div class="panel-heading">
+              <h3 id="chart-title">Available cash</h3>
+              <ul id="chart-legend" class="legend" aria-label="Chart legend"></ul>
+            </div>
+            <canvas id="cash-chart" role="img" aria-label="Available cash compared with the reserve by month. Exact balances are in the monthly schedule."></canvas>
+          </section>
+          <section class="panel schedule-panel" aria-labelledby="schedule-title">
+            <div class="panel-heading">
+              <h3 id="schedule-title">Monthly schedule</h3>
+              <span id="schedule-plan" class="schedule-plan"></span>
+            </div>
+            <div class="table-scroll" role="region" aria-label="Monthly schedule" tabindex="0">
+              <table id="schedule-table" aria-labelledby="schedule-title schedule-plan">
+                <thead>
+                  <tr><th scope="col">Month</th><th scope="col">Cash flow</th><th scope="col">Set aside</th><th scope="col">Purchase</th><th scope="col">Available</th><th scope="col">Earmarked</th></tr>
+                </thead>
+                <tbody id="schedule-rows"></tbody>
+              </table>
+            </div>
+            <div class="pagination" id="schedule-pagination" hidden>
+              <p id="page-status" role="status"></p>
+              <button type="button" id="previous-page">Previous</button>
+              <button type="button" id="next-page">Next</button>
+            </div>
+          </section>
+        </div>
+      </section>
+    </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <dialog id="editor" class="editor" aria-labelledby="editor-title">
+    <form id="editor-form" novalidate>
+      <div class="dialog-heading"><div><h2 id="editor-title"></h2><p id="editor-description" class="muted" hidden></p></div>
+        <button type="button" data-cancel class="icon-link" aria-label="Close dialog"><svg class="icon" aria-hidden="true"><use href="/icons.svg#close"></use></svg></button>
+      </div>
+      <p id="editor-error" class="notice" role="alert" hidden></p>
+      <div id="editor-fields"></div>
+      <div class="dialog-actions">
+        <button id="editor-delete" type="button" class="danger-button" hidden><svg class="icon" aria-hidden="true"><use href="/icons.svg#trash"></use></svg> Delete</button>
+        <div class="dialog-save"><button type="button" data-cancel class="secondary">Cancel</button><button id="editor-save" type="submit" class="primary">Save</button></div>
+      </div>
+    </form>
+  </dialog>
+
+  <template id="transaction-fields">
+    <div class="field-grid">
+      <label class="field"><span>Type</span><select name="kind" required></select></label>
+      <label class="field"><span>Date</span><input name="posted_on" type="date" required></label>
+      <label class="field"><span>Description</span><input name="name" maxlength="100" placeholder="e.g. Weekly groceries" required></label>
+      <label class="field"><span data-amount-label>Amount (€)</span><input name="amount" inputmode="decimal" placeholder="0.00" required></label>
+      <label class="field"><span data-account-label>Account</span><select name="account_id" required></select></label>
+      <label class="field" data-destination hidden><span>Destination account</span><select name="destination_id"></select></label>
+      <label class="field" data-category-field><span>Category</span><select name="category_id"></select></label>
+      <div class="field full field-tools"><button type="button" data-new-account class="text-button"><svg class="icon" aria-hidden="true"><use href="/icons.svg#plus"></use></svg> New account</button><button type="button" data-new-category class="text-button"><svg class="icon" aria-hidden="true"><use href="/icons.svg#plus"></use></svg> New category</button></div>
+      <p class="field-hint full" data-kind-help hidden></p>
+      <label class="statement-option full" data-statement-option>
+        <input type="checkbox" name="statement_expected" checked>
+        <span>This transaction will appear on a statement
+          <small data-statement-hint>Quant can match it when you import the statement.</small></span>
+      </label>
+      <label class="field full"><span>Labels <small>Optional</small></span><input name="labels" placeholder="e.g. recurring, household" maxlength="450"><small>Separate labels with commas.</small></label>
+      <div class="label-suggestions full" aria-label="Recent labels" hidden></div>
+      <label class="field full"><span>Note <small>Optional</small></span><textarea name="note" rows="2" maxlength="600"></textarea></label>
+      <div class="full" data-transaction-attachments></div>
+    </div>
+  </template>
+  <template id="account-fields">
+    <div class="field-grid">
+      <label class="field full"><span>Account name</span><input name="name" maxlength="70" placeholder="e.g. Rainy day savings" required></label>
+      <label class="field"><span>Account type</span><select name="kind" required></select></label>
+      <label class="field"><span>Opening date</span><input name="opened_on" type="date" required></label>
+      <label class="field full"><span>Opening balance (€)</span><input name="opening_balance" inputmode="decimal" placeholder="0.00" required><small>Use the balance before the first transaction you’ll record.</small></label>
+    </div>
+  </template>
+  <template id="category-fields">
+    <div class="field-grid">
+      <label class="field full"><span>Category name</span><input name="name" maxlength="60" placeholder="e.g. Groceries" required></label>
+      <label class="field"><span>Money flow</span><select name="kind" required></select></label>
+      <label class="field"><span>Parent category</span><select name="parent_id"></select></label>
+      <label class="field full"><span>Color</span><select name="color" required></select></label>
+    </div>
+  </template>
+
+  <dialog id="scenario-dialog" class="editor" aria-labelledby="scenario-save-heading">
+    <form id="scenario-save-form">
+      <div class="dialog-heading"><h2 id="scenario-save-heading">Save comparison</h2></div>
+      <label class="field"><span>Comparison name</span><input name="name" maxlength="80" placeholder="e.g. Car purchase next spring" required></label>
+      <p id="scenario-save-error" class="notice" role="alert" hidden></p>
+      <div class="dialog-actions"><div class="dialog-save">
+        <button type="button" id="cancel-scenario-save" class="secondary">Cancel</button><button type="submit" class="primary">Save comparison</button>
+      </div></div>
+    </form>
+  </dialog>
+  <template id="plan-template">
+    <article class="panel plan-card">
+      <button type="button" class="plan-choice" aria-pressed="false" aria-controls="schedule-table">
+        <span class="plan-radio" aria-hidden="true"></span><span data-plan-title></span>
+      </button>
+      <dl class="plan-metrics">
+        <div><dt>Set aside now</dt><dd data-contribution></dd></div>
+        <div><dt>Lowest available cash</dt><dd data-lowest></dd></div>
+        <div><dt>Cash after purchase</dt><dd data-closing></dd></div>
+      </dl>
+    </article>
+  </template>
+</body>
+</html>

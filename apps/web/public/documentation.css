@@ -1,0 +1,240 @@
+.documentation-layout {
+  display: grid;
+  grid-template-columns: minmax(205px, 250px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.documentation-directory {
+  padding: 14px;
+}
+
+.documentation-search input {
+  width: 100%;
+}
+
+.documentation-search-count {
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: .81rem;
+}
+
+.documentation-topics {
+  display: grid;
+  gap: 12px;
+  margin-top: 13px;
+}
+
+.documentation-group-label {
+  padding: 0 8px;
+  margin-bottom: 3px;
+  color: var(--muted);
+  font-size: .76rem;
+  font-weight: 690;
+}
+
+.documentation-topic-group ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.documentation-topic {
+  display: block;
+  padding: 7px 8px;
+  border-radius: 7px;
+  font-size: .86rem;
+  line-height: 1.3;
+}
+
+.documentation-topic:hover {
+  background: var(--subtle);
+  color: var(--primary-dark);
+}
+
+.documentation-topic[aria-current="page"] {
+  background: var(--primary-pale);
+  color: var(--primary-dark);
+  font-weight: 670;
+}
+
+.documentation-article {
+  padding: clamp(17px, 3.4vw, 36px);
+}
+
+.documentation-article-header {
+  max-width: 68ch;
+  margin-bottom: 23px;
+}
+
+.documentation-article-header h2 {
+  font-size: clamp(1.42rem, 2.65vw, 2.12rem);
+  line-height: 1.14;
+}
+
+.documentation-summary {
+  margin-top: 8px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.documentation-copy {
+  display: grid;
+  gap: 18px;
+  max-width: 68ch;
+  font-size: .94rem;
+  line-height: 1.55;
+}
+
+.documentation-section h3,
+.documentation-example h3 {
+  margin-bottom: 6px;
+}
+
+.documentation-section p + p,
+.documentation-section li + li {
+  margin-top: 7px;
+}
+
+.documentation-section ul,
+.documentation-section ol {
+  margin: 6px 0 0;
+  padding-left: 1.45rem;
+}
+
+.documentation-copy > .text-link {
+  justify-self: start;
+}
+
+.documentation-example {
+  padding: 12px 14px;
+  background: var(--subtle);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+
+.documentation-example .icon {
+  width: 16px;
+  color: var(--primary-dark);
+  margin-right: 3px;
+}
+
+.documentation-actions,
+.documentation-guide-samples,
+.documentation-guide-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.documentation-related {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.documentation-related h3 {
+  flex: 0 0 100%;
+}
+
+.documentation-related-link {
+  color: var(--primary-dark);
+  text-decoration: underline;
+  text-underline-offset: .15em;
+}
+
+.documentation-guide {
+  position: fixed;
+  z-index: 24;
+  inset-inline-end: max(14px, env(safe-area-inset-right));
+  inset-block-end: max(14px, env(safe-area-inset-bottom));
+  width: min(410px, calc(100vw - 28px));
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 17px 19px;
+  box-shadow: 0 11px 35px #1c1b3c2a;
+}
+
+[data-guide-target] {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+  background: var(--primary-pale);
+}
+
+.documentation-guide-step {
+  color: var(--muted);
+  font-size: .83rem;
+}
+
+.documentation-guide progress {
+  display: block;
+  width: 100%;
+  height: 8px;
+  margin: 7px 0 12px;
+  accent-color: var(--primary);
+}
+
+.documentation-guide h2 {
+  font-size: 1.32rem;
+}
+
+.documentation-guide-copy {
+  margin-top: 8px;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.documentation-guide-route {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  justify-content: space-between;
+  margin: 9px 0 0;
+}
+
+.documentation-guide-route strong { color: var(--primary-dark); }
+.documentation-guide-topic { margin-top: 7px; }
+
+.documentation-guide-samples,
+.documentation-guide .documentation-error {
+  margin-top: 10px;
+}
+
+.documentation-guide-navigation {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+@media (max-width: 575px) {
+  .documentation-guide {
+    padding: 12px 14px;
+    max-height: 51dvh;
+  }
+}
+
+@media (max-width: 800px) {
+  .documentation-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .documentation-topics {
+    max-height: 13rem;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 3px;
+  }
+}

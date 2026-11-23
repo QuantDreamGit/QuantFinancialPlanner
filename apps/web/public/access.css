@@ -1,0 +1,23 @@
+.access-content { display: grid; gap: 15px; }
+.access-panel { padding: 17px 18px; }
+.access-panel > .panel-heading { margin-bottom: 12px; }
+.access-invite-form, .access-link-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
+.access-invite-form .field { flex: 0 1 300px; min-width: 0; }
+.access-invite-form .field select { min-width: 0; width: 100%; }
+.access-invite-hint { margin-top: 8px; font-size: .87rem; }
+.access-invite-link { margin-top: 14px; padding: 12px; border: 1px solid #dfdcf6; border-radius: 9px; background: #faf9ff; }
+.access-link-controls .field { flex: 1 1 250px; min-width: 0; }
+.access-link-feedback { font-size: .87rem; color: var(--positive); }
+.access-link-feedback:not(:empty) { margin-top: 4px; }
+.access-list { display: grid; }
+.access-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 18px; padding: 11px 0; }
+.access-row + .access-row { border-top: 1px solid var(--border); }
+.access-identity { min-width: 0; overflow-wrap: anywhere; }
+.access-identity p, .access-message { font-size: .87rem; }
+.access-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.access-chip { display: inline-flex; align-items: center; border-radius: 99px; background: var(--subtle); color: var(--muted); padding: 4px 8px; font-weight: 600; font-size: .78rem; }
+.access-chip[data-status="active"], .access-chip[data-status="used"] { background: #ebf7f2; color: var(--positive); }
+.access-chip[data-status="pending"] { background: #fff4dc; color: #836016; }
+.access-chip[data-status="disabled"], .access-chip[data-status="revoked"] { background: #fceff2; color: var(--negative); }
+.access-confirm-detail { margin-top: 8px; }
+.access-panel button { white-space: normal; }

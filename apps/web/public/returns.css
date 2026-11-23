@@ -1,0 +1,166 @@
+.returns-body,
+.returns-list,
+.returns-form {
+  display: grid;
+  gap: 12px;
+}
+
+.returns-filter {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.returns-filter .field {
+  min-width: min(13rem, 100%);
+}
+
+.returns-note {
+  font-size: .87rem;
+}
+
+.returns-rule {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  overflow-wrap: anywhere;
+}
+
+.returns-rule-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, .8fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.returns-rule-title {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.returns-rule-name {
+  min-width: 0;
+}
+
+.returns-kind {
+  display: grid;
+  place-items: center;
+  flex: 0 0 36px;
+  height: 36px;
+  color: var(--positive);
+  background: var(--subtle);
+  border-radius: 8px;
+}
+
+.returns-rule-name p,
+.returns-route p,
+.returns-next span,
+.returns-value small {
+  font-size: .83rem;
+}
+
+.returns-value > strong {
+  font-size: 1.12rem;
+}
+
+.returns-next,
+.returns-value small {
+  display: block;
+}
+
+.returns-next strong {
+  display: block;
+}
+
+.returns-route {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 5px 14px;
+}
+
+.returns-route p:first-child strong {
+  font-weight: 620;
+}
+
+.returns-rule-actions,
+.returns-due-dates {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+
+.returns-rule-actions {
+  border-top: 1px solid var(--border);
+  padding-top: 9px;
+}
+
+.returns-rule-actions > .text-button {
+  margin-inline-start: auto;
+}
+
+.returns-due {
+  font-size: .83rem;
+  color: var(--reserve);
+}
+
+.returns-records {
+  font-size: .83rem;
+  padding: 5px 0;
+}
+
+.returns-records summary {
+  cursor: pointer;
+  font-weight: 620;
+}
+
+.returns-records ul {
+  margin: 4px 0 0;
+  padding-inline-start: 18px;
+}
+
+.returns-notice {
+  margin-bottom: 0;
+}
+
+.returns-receipt-description {
+  font-weight: 650;
+}
+
+.returns-receipt-description + p {
+  margin: 4px 0 12px;
+}
+
+.returns-field-note,
+.returns-editor .dialog-actions + p,
+.returns-editor .returns-form + p {
+  font-size: .84rem;
+}
+
+.returns-editor .text-link {
+  display: inline-flex;
+  margin-top: 9px;
+}
+
+@media (max-width: 620px) {
+  .returns-rule-main {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .returns-rule-title {
+    grid-column: 1 / -1;
+  }
+
+  .returns-filter .field {
+    flex: 1;
+  }
+
+  .returns-rule-actions > .text-button {
+    margin-inline-start: 0;
+  }
+}

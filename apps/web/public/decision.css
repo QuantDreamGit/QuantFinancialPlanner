@@ -1,0 +1,31 @@
+.decision-tabs { margin-bottom: 14px; flex-wrap: wrap; }
+.decision-view, .decision-results { display: grid; gap: 14px; }
+.decision-results:empty { display: none; }
+.decision-panel { padding: 18px; display: grid; gap: 10px; }
+.decision-panel > p { max-width: 78ch; }
+.decision-form, .decision-panel form { display: grid; gap: 12px; }
+.decision-form > button { justify-self: start; }
+.decision-actions { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 9px; }
+.decision-actions .field { min-width: min(245px, 100%); }
+.decision-panel input[type=checkbox] { width: 18px; margin: 4px 0; accent-color: var(--primary); }
+.decision-values > summary { cursor: pointer; color: var(--primary-dark); font-weight: 620; }
+.decision-values > :not(summary) { margin-top: 9px; }
+.decision-stats { display: flex; gap: 14px 24px; flex-wrap: wrap; margin-block: 3px; }
+.decision-stat { display: grid; gap: 3px; }
+.decision-stat strong { font-size: 1.22rem; }
+.decision-chart { overflow-x: auto; }
+.decision-chart svg { display: block; width: 100%; min-width: 420px; max-height: 310px; }
+.decision-chart text { font: 12px system-ui, sans-serif; fill: var(--muted); }
+.decision-grid-line { stroke: var(--border); }
+.decision-line { stroke: var(--series); stroke-width: 2.5; }
+.decision-dot { fill: var(--series); }
+.decision-series-0 { --series: var(--primary); }
+.decision-series-1 { --series: #2e8d73; }
+.decision-line.decision-series-1 { stroke-dasharray: 6 4; }
+.decision-band { fill: var(--primary); opacity: .13; }
+.decision-floor { stroke: #ac613f; stroke-width: 1.5; stroke-dasharray: 4 3; }
+.decision-legend { display: flex; gap: 8px 15px; flex-wrap: wrap; color: var(--muted); font-size: .86rem; }
+.decision-key::before { content: ""; display: inline-block; vertical-align: middle; width: 12px; height: 3px; margin-right: 5px; background: var(--series); }
+.decision-key-band { --series: var(--primary-pale); }
+.decision-key-floor { --series: #ac613f; }
+@media (max-width: 620px) { .decision-panel .field-grid { grid-template-columns: 1fr; } }
