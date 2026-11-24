@@ -137,6 +137,39 @@ class ImportsTests(unittest.TestCase):
         manual = self.api("/preview", dict(data, csv_method="local", **layout))
         self.assertEqual([row["review_key"] for row in rows], [row["review_key"] for row in manual["rows"]])
 
+    def test_openai_csv_recovers_missing_columns_and_a_single_debit_column(self):
+        data = self.input("Data valuta;Data contabile;Descrizione;Addebiti;Saldo\n"
+                          "06/11/2026;05/11/2026;Market;8,75;100,00\n"
+                          "20/11/2026;19/11/2026;Train;24,50;75,50\n",
+                          csv_method="openai", ai_consent=True, api_key="sk-synthetic-csv-test-key")
+        incomplete = {"mapping": {"debit": 3}, "date_format": "auto", "amount_mode": "separate"}
+        with patch("apps.web.imports.suggest_csv_mapping", return_value=incomplete):
+            preview = self.api("/preview", data)
+        layout = preview["csv_layout"]
+        self.assertEqual(layout["mapping"], {"date": 1, "name": 2, "debit": 3})
+        self.assertEqual(layout["date_format"], "dmy")
+        self.assertEqual([(row["posted_on"], row["name"], row["amount"]) for row in preview["rows"]],
+                         [("2026-11-05", "Market", "-875"), ("2026-11-19", "Train", "-2450")])
+        manual = self.api("/preview", dict(data, csv_method="local", mapping=layout["mapping"],
+                                          date_format=layout["date_format"], amount_mode=layout["amount_mode"]))
+        self.assertEqual([row["review_key"] for row in manual["rows"]], [row["review_key"] for row in preview["rows"]])
+
+    def test_openai_csv_keeps_unmapped_rows_editable_without_guessing_values(self):
+        data = self.input("Memo;Amount;Tag\nMetro;4,80;Commute\nLunch;9,90;Work\n",
+                          csv_method="openai", ai_consent=True, api_key="sk-synthetic-csv-test-key")
+        incomplete = {"mapping": {"name": 0, "amount": 1}, "date_format": "auto", "amount_mode": None}
+        with patch("apps.web.imports.suggest_csv_mapping", return_value=incomplete):
+            preview = self.api("/preview", data)
+        rows = preview["rows"]
+        self.assertEqual([(row["posted_on"], row["name"], row["amount"]) for row in rows],
+                         [("", "Metro", None), ("", "Lunch", None)])
+        self.assertIn("posting date", preview["notices"][0])
+        self.assertIn("amount signs", preview["notices"][1])
+        self.assertIn("Amount: 4,80", rows[0]["csv_source"])
+        with self.assertRaises(ApiError):
+            self.commit(self.decide(rows[0], posted_on="2026-11-16"))
+        self.assertEqual(self.commit(self.decide(rows[0], posted_on="2026-11-16", amount="-4.80"))["saved"], 1)
+
     def test_review_prompt_sends_editable_fields_and_never_writes_to_the_ledger(self):
         category = self.db.save_category({"kind": "expense", "name": "Groceries", "color": "mint"})
         data = {

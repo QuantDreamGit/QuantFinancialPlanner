@@ -50,14 +50,23 @@ DATE_FIELDS = ("auto", "dmy", "mdy", "ymd")
 AMOUNT_MODES = ("debit-negative", "debit-positive", "separate")
 DEFAULT_IMPORT_CATEGORIES = {"expense": "Other expenses", "income": "Other income"}
 COLUMNS = {
-    "date": ("date", "postingdate", "bookeddate", "bookingdate", "transactiondate", "valuedate", "completeddate", "datum", "boekdatum"),
-    "name": ("name", "description", "payee", "merchant", "counterparty", "details", "remittanceinformation", "naamomschrijving", "omschrijving"),
-    "amount": ("amount", "gross", "bedrag", "bedrageur", "transactionamount", "signedamount"),
-    "debit": ("debit", "withdrawal", "af", "out", "paidout"),
-    "credit": ("credit", "deposit", "bij", "in", "paidin"),
-    "direction": ("direction", "debitcredit", "creditdebit", "afbij", "bijaf", "dbcr"),
+    "date": ("date", "postingdate", "bookeddate", "bookingdate", "transactiondate", "valuedate", "completeddate",
+             "datum", "boekdatum", "data", "datacontabile", "dataoperazione", "datamovimento", "dataregistrazione"),
+    "name": ("name", "description", "payee", "merchant", "counterparty", "details", "remittanceinformation",
+             "naamomschrijving", "omschrijving", "descrizione", "descrizioneoperazione", "descrizionemovimento", "causale",
+             "operazione"),
+    "amount": ("amount", "gross", "bedrag", "bedrageur", "transactionamount", "signedamount", "importo", "importoeur",
+               "importomovimento", "importooperazione"),
+    "debit": ("debit", "withdrawal", "af", "out", "paidout", "addebito", "addebiti", "uscita", "uscite", "dare"),
+    "credit": ("credit", "deposit", "bij", "in", "paidin", "accredito", "accrediti", "entrata", "entrate", "avere"),
+    "direction": ("direction", "debitcredit", "creditdebit", "afbij", "bijaf", "dbcr", "segno", "dareavere"),
     "currency": ("currency", "currencycode", "valuta"),
-    "reference": ("reference", "transactionid", "transactionreference", "transactieid", "externalid"),
+    "reference": ("reference", "transactionid", "transactionreference", "transactieid", "externalid", "idtransazione",
+                  "riferimentotransazione"),
+}
+PREFERRED_CSV_HEADERS = {
+    "date": {"postingdate", "bookeddate", "bookingdate", "boekdatum", "datacontabile", "dataregistrazione"},
+    "name": {"description", "descrizione", "descrizioneoperazione", "descrizionemovimento"},
 }
 DATE_TOKEN = r"(?:\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{4}|\d{8})"
 AMOUNT_TOKEN = r"(?<!\w)(?:[-+−]\s*)?(?:EUR\s*|€\s*)?(?:[-+−]\s*)?(?:\d{1,3}(?:[., ]\d{3})+|\d+)[.,]\d{2}(?:\s?(?:EUR|€|CR|DR))?(?![\d.,])"
@@ -191,6 +200,9 @@ def _map_columns(headers):
     guess = {}
     for target, aliases in COLUMNS.items():
         matches = [i for i, key in enumerate(keys) if key in aliases]
+        if len(matches) > 1:
+            preferred = PREFERRED_CSV_HEADERS.get(target, ())
+            matches = [index for index in matches if keys[index] in preferred]
         if len(matches) == 1:
             guess[target] = matches[0]
     return guess
@@ -517,10 +529,53 @@ def _mapping(data, headers, source):
     if len(set(supplied.values())) != len(supplied):
         raise ApiError("Use a different file column for each field.", "mapping")
     mode = data.get("amount_mode", "debit-negative")
-    needed = {"date", "name"} | ({"debit", "credit"} if mode == "separate" else {"amount"})
-    if not needed <= supplied.keys():
+    amount_fields = ("debit", "credit") if mode == "separate" else ("amount",)
+    if not {"date", "name"} <= supplied.keys() or not any(field in supplied for field in amount_fields):
         raise ApiError("Map the date, description, and amount columns.", "mapping")
     return supplied
+
+
+def _csv_date_order(rows, index):
+    orders = set()
+    for _, row in rows:
+        match = re.fullmatch(r"(\d{1,2})[-/.](\d{1,2})[-/.]\d{4}", _pick(row, index))
+        if match:
+            first, second = map(int, match.groups())
+            if 12 < first <= 31 and 1 <= second <= 12:
+                orders.add("dmy")
+            if 12 < second <= 31 and 1 <= first <= 12:
+                orders.add("mdy")
+    return next(iter(orders)) if len(orders) == 1 else "auto"
+
+
+def _complete_csv_layout(headers, rows, suggestion):
+    """Keep usable model fields and fill gaps using recognizable headers."""
+    proposed = suggestion["mapping"]
+    local = _map_columns(headers)
+    if _normalized_header(_pick(headers, local.get("date"))) == "valuedate":
+        local.pop("date")
+    mode = suggestion["amount_mode"]
+    signed_column = "amount" in proposed or "amount" in local
+    dedicated_columns = any(field in proposed or field in local for field in ("debit", "credit"))
+    if dedicated_columns and (mode == "separate" or not signed_column):
+        mode = "separate"
+    elif mode == "separate":
+        mode = None
+    modes = ("debit", "credit") if mode == "separate" else ("amount", "direction")
+    mapping = {}
+    for field in ("date", "name", *modes, "currency", "reference"):
+        for candidate in (proposed.get(field), local.get(field)):
+            if candidate is not None and candidate not in mapping.values():
+                mapping[field] = candidate
+                break
+    date_order = suggestion["date_format"]
+    if date_order == "auto" and "date" in mapping:
+        date_order = _csv_date_order(rows, mapping["date"])
+    if mode is None and {"amount", "direction"} <= mapping.keys() and all(
+        not _pick(row, mapping["amount"]) or _pick(row, mapping["direction"]) for _, row in rows
+    ):
+        mode = "debit-negative"
+    return {"mapping": mapping, "date_format": date_order, "amount_mode": mode}
 
 
 def _openai_csv_layout(database, data, account_id, headers, rows, key_store, user_id):
@@ -532,14 +587,8 @@ def _openai_csv_layout(database, data, account_id, headers, rows, key_store, use
     count = min(8, len(rows))
     indices = [index * (len(rows) - 1) // (count - 1) for index in range(count)] if count > 1 else [0]
     samples = [[_clean(cell, 100) for cell in rows[index][1][:len(headers)]] for index in indices]
-    layout = suggest_csv_mapping(headers, samples, api_key=api_key, model=data["openai_model"])
-    if layout["amount_mode"] is None:
-        raise ApiError("OpenAI could not determine which amounts are debits or credits. Use manual column mapping.", "amount_mode")
-    try:
-        _mapping(layout, headers, "csv")
-    except ApiError as error:
-        raise ApiError("OpenAI could not identify a complete CSV layout. Use manual column mapping. " + str(error),
-                       error.field) from error
+    suggestion = suggest_csv_mapping(headers, samples, api_key=api_key, model=data["openai_model"])
+    layout = _complete_csv_layout(headers, rows, suggestion)
     notices = []
     if remember_key:
         _remember_ai_key(key_store, user_id, api_key, "OpenAI", notices)
@@ -566,6 +615,8 @@ def _review_prompt(database, data, today, key_store, user_id):
         fields = {field: _clean(row[field], 150) for field in (
             "posted_on", "name", "amount", "category_id", "action", "target", "currency", "reference", "source", "line",
         ) if field in row}
+        if row.get("csv_source"):
+            fields["csv_source"] = _clean(row["csv_source"], 350)
         choices = row.get("choices")
         if isinstance(choices, dict):
             fields["choices"] = {
@@ -788,10 +839,15 @@ def _preview(database, data, today, *, key_store=None, user_id=None):
     if csv_openai:
         layout, csv_notices = _openai_csv_layout(database, data, account_id, headers, raw_rows, key_store, user_id)
         data = {**data, **layout}
-    mapping = _mapping(data, headers, source)
+    mapping = layout["mapping"] if csv_openai else _mapping(data, headers, source)
     date_order = "ymd" if ai or source == "amazon" else choice(data.get("date_format", "auto"), DATE_FIELDS, "date_format")
-    mode = "debit-negative" if ai or source == "amazon" else choice(
-        data.get("amount_mode", "debit-negative"), AMOUNT_MODES, "amount_mode")
+    if csv_openai:
+        mode = layout["amount_mode"]
+    else:
+        mode = "debit-negative" if ai or source == "amazon" else choice(
+            data.get("amount_mode", "debit-negative"), AMOUNT_MODES, "amount_mode")
+    amount_fields = ("debit", "credit") if mode == "separate" else ("amount",)
+    amount_mapped = any(field in mapping for field in amount_fields)
     warnings = set(uncertain)
     with database.connection(snapshot=True) as conn:
         account = _set_account(conn, account_id)
@@ -824,12 +880,18 @@ def _preview(database, data, today, *, key_store=None, user_id=None):
             if issue := _clean(evidence.get("issue"), 200):
                 errors.append(issue)
             try:
+                if csv_openai and "date" not in mapping:
+                    raise ApiError("No posting date column was identified.", "date")
                 posted = parse_date(value, date_order)
                 if posted > today or posted.isoformat() < account["opened_on"]:
                     errors.append("Date falls outside the account’s recorded period.")
             except ApiError as error:
                 errors.append(str(error))
             try:
+                if csv_openai and not amount_mapped:
+                    raise ApiError("No transaction amount column was identified.", "amount")
+                if csv_openai and mode is None:
+                    raise ApiError("Confirm which amounts are debits or credits.", "amount")
                 cents = _column_amount(row, mapping, mode)
                 if not cents or cents == -(2**63):
                     errors.append("Enter a nonzero amount within the supported range.")
@@ -903,6 +965,8 @@ def _preview(database, data, today, *, key_store=None, user_id=None):
                 ),
                 "page": evidence.get("page"), "evidence": _clean(evidence.get("evidence"), 160),
                 "statement_description": statement_description if openai else "",
+                **({"csv_source": " · ".join(f"{header}: {_clean(cell, 100)}" for header, cell in zip(headers, row)
+                                            if cell.strip())[:350]} if csv_openai and errors else {}),
             }, fingerprint, seen_key, identified, automatic))
     copies = Counter(item[1] for item in pending)
     if document is None and original_pdf is not None:
@@ -943,6 +1007,17 @@ def _preview(database, data, today, *, key_store=None, user_id=None):
         ]))
     notices = []
     if csv_openai:
+        missing = []
+        if "date" not in mapping:
+            missing.append("posting date")
+        if "name" not in mapping:
+            missing.append("description")
+        if not amount_mapped:
+            missing.append("amount")
+        if missing:
+            notices.append("The CSV layout is missing " + ", ".join(missing) + ". Fill the blank cells in the review table.")
+        if amount_mapped and mode is None:
+            notices.append("The amount signs are unclear. Enter signed amounts in the review table.")
         notices.append("Check the parsed dates and amounts against your statement. To adjust the layout, choose Manual column mapping in Import settings.")
         notices.extend(csv_notices)
     if source == "pdf":

@@ -257,7 +257,7 @@ function mergePdfRows(rows) {
 function previewLabel(result) {
   const title = result.name || sourceNames[result.source] || "Statement";
   const model = result.openai_model ? " · " + result.openai_model : "";
-  if (result.csv_method === "openai") return title + " · Columns identified with OpenAI" + model;
+  if (result.csv_method === "openai") return title + " · OpenAI CSV review" + model;
   const provider = pdfProviders[result.pdf_method];
   return title + (provider ? " · Extracted with " + provider.name + model : "");
 }
@@ -456,7 +456,7 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
   const promptSettings = element("div", "imports-prompt-settings");
   promptSettings.append(label("Model for table edits", promptModel), promptKeyLabel);
   promptForm.append(label("Describe your edits", prompt), promptSettings,
-    element("p", "muted", "This sends your prompt, editable rows from every page, and available category and match options to OpenAI."),
+    element("p", "muted", "This sends your prompt, editable rows and their source details, and available category and match options to OpenAI."),
     promptActions, promptStatus);
   promptPanel.append(promptForm);
   prompt.addEventListener("input", updatePromptControls);
@@ -869,8 +869,10 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     lastSamples = details.sample;
     if (details.date_format) dates.value = details.date_format;
     if (details.amount_mode) amountMode.value = details.amount_mode;
-    else if (mapping.amount === undefined && mapping.debit !== undefined && mapping.credit !== undefined) {
+    else if (mapping.amount === undefined && (mapping.debit !== undefined || mapping.credit !== undefined)) {
       amountMode.value = "separate";
+    } else if (amountMode.value === "separate") {
+      amountMode.value = "debit-negative";
     }
     renderMapping(lastSamples);
   }
@@ -1185,6 +1187,7 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
       id: index + 1, posted_on: row.posted_on, name: row.name, amount: row.value,
       category_id: row.category_id, action: row.action, target: row[targetFields[row.action]] || "",
       currency: reviewedCurrency(row), reference: row.reference, source: sourceLabel(row), line: row.line,
+      ...(row.csv_source ? { csv_source: row.csv_source } : {}),
       ...(Object.keys(choices).length ? { choices } : {}),
     };
   }
@@ -1335,7 +1338,7 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     treatment.disabled = busy;
     const extra = element("td", "imports-review-target");
     const comparison = element("div", "imports-match");
-    const notes = [sourceLabel(row), row.reference && "Reference " + row.reference,
+    const notes = [sourceLabel(row), row.csv_source, row.reference && "Reference " + row.reference,
       row.overlap, row.matchOverlap].filter(Boolean);
     const warnings = row.errors.filter(issue => !(row.currency_unconfirmed && issue === "Confirm that this row is in euros."));
     if (row.review_hold) warnings.push("Check the extracted amounts against the totals printed on this statement.");
