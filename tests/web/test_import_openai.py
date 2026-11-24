@@ -38,6 +38,23 @@ class OpenAIPDFTests(unittest.TestCase):
         request.assert_called_once_with(PDF, KEY, openai.MODEL)
         return extracted
 
+    def test_merchant_search_requires_completed_tool_call_and_isolates_queries(self):
+        rows = [{"id": 4, "query": "waternet"}]
+        expected = {"merchant": "Waternet", "business_type": "Water utility"}
+        envelope = json.loads(response({"rows": [{"id": 4, **expected}, {"id": 9, **expected}]}))
+        envelope["output"].insert(0, {"type": "web_search_call", "status": "completed"})
+        with patch.object(openai, "_send", return_value=json.dumps(envelope).encode()) as send:
+            self.assertEqual(openai.look_up_merchants(rows, api_key=KEY), {4: expected})
+            payload = send.call_args.args[0]
+            self.assertEqual(json.loads(payload["input"]), {"rows": rows})
+            self.assertEqual(payload["tools"], [{"type": "web_search", "search_context_size": "low"}])
+            self.assertEqual(payload["max_tool_calls"], openai.MERCHANT_LOOKUP_LIMIT)
+            self.assertFalse(payload["store"])
+            self.assertTrue(payload["text"]["format"]["strict"])
+            envelope["output"][0]["status"] = "failed"
+            send.return_value = json.dumps(envelope).encode()
+            self.assertEqual(openai.look_up_merchants(rows, api_key=KEY), {})
+
     def test_request_posts_inline_pdf_with_strict_schema_and_no_tools(self):
         with patch.object(openai, "HTTPSConnection") as connection:
             network = connection.return_value

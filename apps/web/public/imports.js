@@ -28,6 +28,8 @@ const dateChoices = [
 const pageSize = 25;
 const commitSize = 4000;
 const categoryBatchSize = 120;
+const categorySources = { history: "Past choice", merchant: "Merchant match", ai: "AI suggestion", web: "Web-assisted suggestion" };
+const merchantSearchLabel = "Look up unfamiliar merchant names on the web";
 const smallExpenseLimit = 25000n;
 const otherMovementKinds = new Set(["transfer", "investment", "valuation", "settlement"]);
 const otherMovementActions = new Set(["transfer", "settle", "expected"]);
@@ -376,7 +378,11 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
   const autoCategories = element("input");
   autoCategories.type = "checkbox";
   const autoCategoryLabel = element("label", "imports-check");
-  autoCategoryLabel.append(autoCategories, "Suggest categories with OpenAI using this statement and relevant past descriptions.");
+  autoCategoryLabel.append(autoCategories, "Send unfamiliar descriptions and relevant past examples to OpenAI for category suggestions.");
+  const autoMerchantSearch = element("input");
+  autoMerchantSearch.type = "checkbox";
+  const autoMerchantSearchLabel = element("label", "imports-check");
+  autoMerchantSearchLabel.append(autoMerchantSearch, merchantSearchLabel);
   const apiKey = textInput("", "API key", "password");
   apiKey.autocomplete = "off";
   apiKey.autocapitalize = "off";
@@ -400,7 +406,7 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
   keyControls.append(keyChange, keyRemove);
   keyState.append(keyStatus, keyControls);
   keyPanel.append(keyLabel, keySave, keyCancel, keyLink, keyHint);
-  aiPanel.append(modelLabel, keyState, keyPanel, consentLabel, autoCategoryLabel, consentDetails);
+  aiPanel.append(modelLabel, keyState, keyPanel, consentLabel, autoCategoryLabel, autoMerchantSearchLabel, consentDetails);
   const ocr = element("input");
   ocr.type = "checkbox";
   const ocrLabel = element("label", "imports-check");
@@ -440,10 +446,10 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
   let categoryRequest = 0, appliedCategoryRequest = 0;
   let categoryMap = new Map();
   let updateDraftCategories;
-  const controls = [source, account, file, importName, pdfMethod, csvMethod, openaiModel, consent, autoCategories,
+  const controls = [source, account, file, importName, pdfMethod, csvMethod, openaiModel, consent, autoCategories, autoMerchantSearch,
     apiKey, delimiters, dates, amountMode, ocr];
   const promptPanel = element("details", "imports-prompt");
-  promptPanel.append(element("summary", "", "Edit table with a prompt"));
+  promptPanel.append(element("summary", "", "Categorize or edit with OpenAI"));
   const promptForm = element("div", "imports-prompt-form");
   const prompt = element("textarea");
   prompt.maxLength = 2000;
@@ -460,14 +466,20 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
   promptStatus.tabIndex = -1;
   const promptApply = action("Send to OpenAI and edit draft", editWithPrompt, "secondary");
   const categorySuggest = action("Suggest categories with OpenAI", suggestWithOpenAI);
+  const merchantSearch = element("input");
+  merchantSearch.type = "checkbox";
+  const searchLabel = element("label", "imports-check");
+  searchLabel.append(merchantSearch, merchantSearchLabel);
   const undoEdit = action("Undo last prompt edit", undoPrompt, "text-button");
   const promptActions = element("div", "imports-review-controls");
-  promptActions.append(promptApply, categorySuggest, undoEdit);
+  promptActions.append(promptApply, undoEdit);
   const promptSettings = element("div", "imports-prompt-settings");
-  promptSettings.append(label("Model for table edits", promptModel), promptKeyLabel);
-  promptForm.append(label("Describe your edits", prompt), promptSettings,
-    element("p", "muted", "This sends your prompt, editable rows and their source details, and available category and match options to OpenAI."),
-    element("p", "muted", "Category suggestions send uncategorized descriptions, category names, and relevant past descriptions to OpenAI."),
+  promptSettings.append(label("OpenAI model", promptModel), promptKeyLabel);
+  promptForm.append(promptSettings,
+    element("p", "muted", "Category suggestions use past choices first. For unfamiliar rows, Quant sends descriptions, categories, and relevant past examples to OpenAI. Web lookup uses shortened merchant names."),
+    searchLabel, categorySuggest,
+    label("Describe your table edits", prompt),
+    element("p", "muted", "Prompt edits send your instruction, editable rows and their source details, and available category and match options to OpenAI."),
     promptActions, promptStatus);
   promptPanel.append(promptForm);
   prompt.addEventListener("input", updatePromptControls);
@@ -581,6 +593,7 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
 
   function updateAvailability() {
     const provider = aiProvider();
+    autoMerchantSearchLabel.hidden = provider?.settings !== "openai" || !autoCategories.checked;
     const manualCsv = source.value === "csv" && !provider;
     read.hidden = !manualCsv;
     const missingPdf = source.value === "pdf" && pdfMethod.value !== "openai" && setup && !setup.pdf_enabled;
@@ -593,6 +606,8 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     review.textContent = busy ? "Processing…" : provider === csvOpenAi ? "Map and review with OpenAI"
       : provider ? "Extract and review with " + provider.name : "Review transactions";
   }
+
+  autoCategories.addEventListener("change", updateAvailability);
 
   function syncSource(initial = false) {
     const isCsv = source.value === "csv";
@@ -952,6 +967,7 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
       commitment: commitment ? commitment.id + "|" + commitment.date : "",
       other_account_id: "", person_id: "",
       category_id: row.suggested_category_id != null ? String(row.suggested_category_id) : "",
+      category_history_name: row.name,
     };
   }
 
@@ -990,7 +1006,8 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
       }
       if (provider?.settings === "openai" && autoCategories.checked && result.rows.some(canSuggestCategory)) {
         try {
-          const { notices } = await applyCategorySuggestions(openaiModel.value, key, message => setStatus(message, "progress"));
+          const { notices } = await applyCategorySuggestions(openaiModel.value, key, autoMerchantSearch.checked,
+            message => setStatus(message, "progress"));
           result.notices.push(...notices);
           setStatus();
         } catch (error) {
@@ -1081,13 +1098,14 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     const defaultName = setup.default_categories[kind];
     const existingDefault = categories.find(item => item.parent_id == null && item.name.toLowerCase() === defaultName.toLowerCase());
     const choices = categories.map(item => [item.id, categoryPath(item, categoryMap)]);
+    const previous = historicalCategories(row).map(id => choices.find(([choice]) => choice === id));
     const defaultId = existingDefault ? String(existingDefault.id) : "default";
     if (!existingDefault) choices.unshift([defaultId, defaultName]);
     const selected = row.category_id === "default" ? defaultId : row.category_id;
     if (selected && !choices.some(([id]) => String(id) === selected)) {
       choices.push([selected, "Category unavailable"]);
     }
-    options(control, choices, selected, "No category");
+    options(control, [...previous, ["", "No category"], ...choices.filter(choice => !previous.includes(choice))], selected);
   }
 
   function actionFields(row, container, rowLabel, updateRow) {
@@ -1218,7 +1236,7 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     const needsKey = !setup?.openai?.configured;
     promptKeyLabel.hidden = !needsKey;
     promptKeyHint.hidden = !setup?.openai?.can_save_key || setup.openai.saved_key;
-    for (const control of [prompt, promptKey, promptModel]) control.disabled = busy;
+    for (const control of [prompt, promptKey, promptModel, merchantSearch]) control.disabled = busy;
     promptApply.disabled = busy || !prompt.value.trim() || (needsKey && !promptKey.value.trim());
     promptApply.textContent = busy ? "Working…" : "Send to OpenAI and edit draft";
     categorySuggest.disabled = busy || !result?.rows.some(canSuggestCategory) || (needsKey && !promptKey.value.trim());
@@ -1230,6 +1248,7 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
   function resetPrompt() {
     promptPanel.open = false;
     prompt.value = promptKey.value = promptStatus.textContent = "";
+    merchantSearch.checked = false;
     promptUndo = undefined;
   }
 
@@ -1312,38 +1331,58 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     return row.action === "create" && included(row) && !row.category_id && !row.category_edited;
   }
 
+  function historicalCategories(row) {
+    if (row.category_history_name !== row.name) return [];
+    const kind = parsedCents(row.value) < 0n ? "expense" : "income";
+    return (row.category_history ?? []).filter(id => categoryMap.get(id)?.kind === kind);
+  }
+
   function canSuggestCategory(row) {
-    if (!needsCategory(row) || !row.name.trim()) return false;
+    if (!needsCategory(row) || !row.name.trim() || historicalCategories(row).length > 1) return false;
     const cents = parsedCents(row.value);
     return cents && cents > -(2n ** 63n) && cents < 2n ** 63n;
   }
 
-  async function applyCategorySuggestions(model, key, progress) {
+  async function applyCategorySuggestions(model, key, webSearch, progress) {
     const rows = result.rows.filter(canSuggestCategory);
     const notices = [];
-    const suggestions = [];
+    const updates = new Map();
+    let suggested = 0;
     for (let start = 0; start < rows.length; start += categoryBatchSize) {
       const batch = rows.slice(start, start + categoryBatchSize);
       progress("Suggesting categories for rows " + (start + 1) + "–" + (start + batch.length) + " of " + rows.length + "…");
-      const response = await api(endpoint + "review-categories", { method: "POST", data: {
-        ai_consent: true, account_id: account.value, openai_model: model, ...(key ? { api_key: key } : {}),
-        rows: batch.map((row, index) => ({ id: index + 1, name: row.name, amount: row.value })),
-      } });
+      let response;
+      try {
+        response = await api(endpoint + "review-categories", { method: "POST", data: {
+          ai_consent: true, merchant_web_search: webSearch, account_id: account.value, openai_model: model,
+          ...(key ? { api_key: key } : {}), rows: batch.map((row, index) => ({ id: index + 1, name: row.name, amount: row.value })),
+        } });
+      } catch (error) {
+        if (!start) throw error;
+        notices.push("Category suggestions could not finish. " + apiMessage(error));
+        break;
+      }
       if (response.ai) setup.openai = response.ai;
       notices.push(...response.notices);
-      for (const { id, category_id } of response.suggestions) {
+      for (const { id, category_id, source } of response.suggestions) {
         const row = batch[id - 1];
         if (row && categoryMap.get(category_id)?.kind === (parsedCents(row.value) < 0n ? "expense" : "income")) {
-          suggestions.push([row, category_id]);
+          updates.set(row, { category_id: String(category_id), category_source: source,
+            category_history: source === "history" ? [category_id] : [], category_history_name: row.name });
+          suggested++;
         }
+      }
+      for (const { id, category_ids } of response.conflicts ?? []) {
+        const row = batch[id - 1];
+        if (row) updates.set(row, { category_history: category_ids, category_history_name: row.name });
       }
     }
     const changes = new Map();
-    for (const [row, categoryId] of suggestions) {
-      changes.set(row, { category_id: row.category_id });
-      row.category_id = String(categoryId);
+    for (const [row, edits] of updates) {
+      changes.set(row, Object.fromEntries(Object.keys(edits).map(field => [field, row[field]])));
+      Object.assign(row, edits);
     }
-    return { changes, notices };
+    return { changes, suggested, notices: [...new Set(notices)] };
   }
 
   async function suggestWithOpenAI() {
@@ -1352,11 +1391,12 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     setBusy(true);
     renderPreview();
     try {
-      const { changes, notices } = await applyCategorySuggestions(promptModel.value, key, message => { promptStatus.textContent = message; });
+      const { changes, suggested, notices } = await applyCategorySuggestions(promptModel.value, key, merchantSearch.checked,
+        message => { promptStatus.textContent = message; });
       if (changes.size) {
         promptUndo = { changes, order: result.reviewRows, reordered: false, preserved: 0, categories: true };
       }
-      const summary = changes.size ? countLabel(changes.size, "category", "categories") + " suggested."
+      const summary = suggested ? countLabel(suggested, "category", "categories") + " suggested."
         : "No confident category suggestions.";
       promptStatus.textContent = [summary, ...notices].join(" ");
       if (setup.openai?.configured) promptKey.value = "";
@@ -1513,8 +1553,16 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
         extra.replaceChildren();
       }
     };
+    const refreshCategory = () => {
+      const control = extra.querySelector("select");
+      if (row.action === "create" && control) setCategoryOptions(control, row);
+    };
     for (const [input, key] of [[date, "posted_on"], [name, "name"], [amount, "value"]]) {
-      input.addEventListener("input", () => { row[key] = input.value; updateMatch(); });
+      input.addEventListener("input", () => {
+        row[key] = input.value;
+        if (key === "name" && row.category_history?.length) refreshCategory();
+        updateMatch();
+      });
       input.addEventListener("change", updateSpending);
     }
     amount.addEventListener("change", () => {
@@ -1540,10 +1588,7 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     const choice = immutable ? element("span", "muted", row.blocked ? "Excluded" : "Already handled") : treatment;
     line.append(element("td", "imports-review-date", date), element("td", "imports-review-name", name),
       element("td", "imports-review-amount", amount), element("td", "imports-review-action", choice), extra, reviewCell);
-    return { line, details, refreshCategory() {
-      const control = extra.querySelector("select");
-      if (row.action === "create" && control) setCategoryOptions(control, row);
-    }, showIssue(issue) {
+    return { line, details, refreshCategory, showIssue(issue) {
       line.classList.toggle("imports-review-excluded", !included(row));
       issueNode.classList.toggle("imports-review-invalid", Boolean(issue));
       const hasWarning = warnings.length || row.overlap || row.matchOverlap;
@@ -1552,8 +1597,9 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
       issueNode.textContent = issue || (row.blocked ? row.currency + " unsupported"
         : row.existing != null ? row.appliedLabel || ""
           : row.action === "skip" ? "Skipped" : hasWarning ? "Check source"
-            : categoryCheck ? row.category_conflict ? "Conflicting category history" : "Category uncertain"
-              : isBulkReady(row) && row.action === "link" ? "Verified match" : "");
+            : categoryCheck ? historicalCategories(row).length > 1 ? "Conflicting category history" : "Category uncertain"
+              : isBulkReady(row) && row.action === "link" ? "Verified match"
+                : row.action === "create" && row.category_id && !row.category_edited ? categorySources[row.category_source] || "" : "");
     } };
   }
 
@@ -1708,7 +1754,7 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     const pages = Math.ceil(rows.length / pageSize);
     if (rows.length) {
       section.append(element("p", "muted imports-explanation",
-        "Category suggestions use past transactions. Review uncertain categories and edit cells as needed. Use Skip row to leave out a transaction."));
+        "Past category choices appear first. You can override any suggestion or leave an uncertain row uncategorized."));
       if (rows.some(editable)) {
         updatePromptControls();
         section.append(promptPanel);

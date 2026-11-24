@@ -257,24 +257,77 @@ class ImportsTests(unittest.TestCase):
                 "rows": [{"id": 1, "name": "Uber Amsterdam", "amount": "-42", "token": "private"},
                          {"id": 2, "name": "Ambiguous", "amount": "-21"},
                          {"id": 3, "name": "Uber ride", "amount": "-42"},
-                         {"id": 4, "name": "Conflicting merchant", "amount": "-12"}]}
-        edits = {"updates": [{"rows": [1], "category_id": str(transport)}, {"rows": [2], "category_id": str(income)},
-                             {"rows": [4], "category_id": str(food)}, {"rows": None, "category_id": str(food)}]}
-        with patch("apps.web.imports.suggest_review_edits", return_value=edits) as suggest:
+                         {"id": 4, "name": "Conflicting merchant", "amount": "-12"},
+                         {"id": 5, "name": "UBR BV mobility", "amount": "-12"}]}
+        decisions = {1: {"merchant": "Uber Amsterdam", "category_id": transport},
+                     2: {"merchant": "Ambiguous", "category_id": income},
+                     5: {"merchant": "Uber ride", "category_id": food}}
+        with (patch("apps.web.imports.categorize_merchants", return_value=decisions) as suggest,
+              patch("apps.web.imports.look_up_merchants") as lookup):
             with self.assertRaisesRegex(ApiError, "Confirm that Quant may send"):
                 self.api("/review-categories", data)
             suggest.assert_not_called()
             result = self.api("/review-categories", dict(data, ai_consent=True))
-        context = suggest.call_args.args[1]
-        self.assertEqual([row["id"] for row in context["rows"]], [1, 2])
-        self.assertEqual(set(context["rows"][0]), {"id", "name", "kind", "examples"})
-        self.assertCountEqual(context["rows"][0]["examples"], [
+            lookup.assert_not_called()
+        rows, _ = suggest.call_args.args
+        self.assertEqual([row["id"] for row in rows], [1, 2, 5])
+        self.assertEqual(set(rows[0]), {"id", "name", "kind", "examples"})
+        self.assertCountEqual(rows[0]["examples"], [
             {"name": "Uber ride", "category_id": transport}, {"name": "Uber Eats", "category_id": food},
         ])
-        self.assertEqual(context["rows"][1]["examples"], [])
-        self.assertEqual(result["suggestions"], [{"id": 3, "category_id": transport}, {"id": 1, "category_id": transport}])
+        self.assertEqual(rows[1]["examples"], [])
+        self.assertEqual(result["suggestions"], [{"id": 3, "category_id": transport, "source": "history"},
+                                                {"id": 1, "category_id": transport, "source": "ai"},
+                                                {"id": 5, "category_id": transport, "source": "history"}])
+        self.assertEqual(result["conflicts"], [{"id": 4, "category_ids": [transport, food]}])
         self.assertEqual(len(self.db.ledger().entries), 5)
         self.assertEqual(self.api("/setup")["history"], [])
+
+    def test_amazon_retail_variants_use_past_choices_before_merchant_category(self):
+        retail = self.db.save_category({"kind": "expense", "name": "Shopping", "color": "mint"})
+        amazon = self.db.save_category({"kind": "expense", "name": "Amazon", "color": "amber"})
+        cloud = self.db.save_category({"kind": "expense", "name": "AWS", "color": "sky"})
+        csv = self.input("Date,Description,Amount\n2026-11-15,AMZN MKTP IT*P96LR2,-15\n"
+                         "2026-11-15,AMAZON PRIME*81M2,-8\n2026-11-15,Amazon Web Services,-10\n")
+        rows = self.preview(csv)["rows"]
+        self.assertEqual([(row["suggested_category_id"], row["category_source"]) for row in rows],
+                         [(amazon, "merchant"), (None, None), (cloud, "merchant")])
+        for name, account, category in (("Amazon Marketplace", self.checking, retail),
+                                        ("AMZN MKTP IT*P96LR2", self.savings, amazon)):
+            self.db.save_entry({"kind": "expense", "account_id": account, "name": name, "posted_on": "2026-11-01",
+                                "amount": "20", "category_id": category}, TODAY)
+        rows = self.preview(csv)["rows"]
+        self.assertEqual(rows[0]["category_history"], [retail])
+        self.assertEqual([(row["suggested_category_id"], row["category_source"]) for row in rows],
+                         [(retail, "history"), (None, None), (cloud, "merchant")])
+
+    def test_merchant_lookup_uses_only_deduplicated_short_names_and_keeps_inference_on_failure(self):
+        utilities = self.db.save_category({"kind": "expense", "name": "Utilities", "color": "sky"})
+        food = self.db.save_category({"kind": "expense", "name": "Groceries", "color": "mint"})
+        data = {"account_id": self.checking, "api_key": "sk-synthetic-category-test-key", "ai_consent": True,
+                "merchant_web_search": True, "rows": [
+                    {"id": 1, "name": "PayPal* Waternet 1234567 REF Alice Widgets", "amount": "-21.99"},
+                    {"id": 2, "name": "POS WATERNET 987654321", "amount": "-41.99"},
+                    {"id": 3, "name": "Example Grocer", "amount": "-8"},
+                    {"id": 4, "name": "SEPA TRANSFER John Lastname", "amount": "-25"},
+                ]}
+        ideas = {1: {"merchant": "Waternet", "category_id": None}, 2: {"merchant": "Waternet", "category_id": None},
+                 3: {"merchant": "Example Grocer", "category_id": food}, 4: {"merchant": "John Lastname", "category_id": None}}
+        facts = {"merchant": "Waternet", "business_type": "Drinking water utility"}
+        enriched = {ident: {"merchant": "Waternet", "category_id": utilities} for ident in (1, 2)}
+        with (patch("apps.web.imports.categorize_merchants", side_effect=[ideas, enriched, ideas]) as suggest,
+              patch("apps.web.imports.look_up_merchants", side_effect=[{1: facts}, ApiError("Could not reach search")]) as lookup):
+            result = self.api("/review-categories", data)
+            lookup.assert_called_once_with([{"id": 1, "query": "waternet"}], api_key=data["api_key"], model="gpt-4.1-mini")
+            retried = suggest.call_args.args[0]
+            self.assertEqual([(row["id"], row["merchant_facts"]) for row in retried], [(1, facts), (2, facts)])
+            fallback = self.api("/review-categories", data)
+        local = {"id": 3, "category_id": food, "source": "ai"}
+        self.assertEqual(result["suggestions"], [local, {"id": 1, "category_id": utilities, "source": "web"},
+                                                 {"id": 2, "category_id": utilities, "source": "web"}])
+        self.assertEqual(fallback["suggestions"], [local])
+        self.assertIn("Merchant lookup could not finish", fallback["notices"][0])
+        self.assertEqual(self.db.ledger().entries, [])
 
     def test_import_defaults_create_and_reuse_categories_and_allow_overrides(self):
         groceries = self.db.save_category({"kind": "expense", "name": "Groceries", "color": "mint"})

@@ -48,9 +48,11 @@ Under **Manage → Workspaces**, open **Sample workspace** or **Sample Family**.
 1. In **Import payments**, choose **Bank or card CSV**, select the ledger account, and set **CSV import method** to **AI with OpenAI**. Choose an **OpenAI model**. The CSV and PDF import methods share your saved OpenAI key.
 2. Select the statement and confirm that Quant can send the headers and up to eight sample rows. Choose **Map and review with OpenAI**. Quant uses the suggested layout to read the complete CSV locally and show each transaction in the editable table.
 3. Check the dates, descriptions, and amounts. To adjust the proposed columns or date and amount conventions, choose **Import settings → Manual column mapping**. Quant carries over the suggested layout.
-4. Review the categories and submit the table. Quant prefills categories where past transactions agree. Uncertain rows start with **No category** and can be imported as they are. **Suggest categories with OpenAI** also shares uncategorized descriptions, category names, and relevant descriptions from your history.
+4. Review the categories and submit the table. Quant recognizes common variations in merchant names and puts past choices first. Matching past transactions prefill the category when they agree. If they disagree, the previous categories appear at the top of the dropdown and the row stays uncategorized.
 
-In any import review, open **Edit table with a prompt** to describe an edit. For example, enter “Use 15-11-2026 for missing dates,” “Rename POS Market to Market,” or “Put supermarket payments in Groceries.” Quant sends your prompt, editable rows from all pages, and available category and match options to OpenAI. The changes apply to the draft, where you can review or undo them before importing.
+In any import review, open **Categorize or edit with OpenAI** and select **Suggest categories with OpenAI**. Quant shares uncategorized descriptions, category names, and relevant descriptions from your history. Enable **Look up unfamiliar merchant names on the web** to let OpenAI search using shortened merchant names. Suggestions remain editable, and you can import a row with **No category**.
+
+In the same panel, use **Describe your table edits** for a request such as “Use 15-11-2026 for missing dates,” “Rename POS Market to Market,” or “Put supermarket payments in Groceries.” Quant sends your prompt, editable rows from all pages, and available category and match options to OpenAI. You can review or undo the changes before importing.
 
 ## Track vehicle costs
 

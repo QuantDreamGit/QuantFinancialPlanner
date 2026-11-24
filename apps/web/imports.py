@@ -20,7 +20,8 @@ from pathlib import Path
 
 from .forecast import calendar_occurrences, post_occurrence
 from .import_ai import configured as ai_configured, extract_statement, validate_api_key
-from .import_openai import MODEL as OPENAI_DEFAULT_MODEL, MODELS as OPENAI_MODELS
+from .import_openai import MERCHANT_LOOKUP_LIMIT, MODEL as OPENAI_DEFAULT_MODEL, MODELS as OPENAI_MODELS
+from .import_openai import categorize_merchants, look_up_merchants
 from .import_openai import configured as openai_configured, extract_statement as extract_openai_statement
 from .import_openai import suggest_csv_mapping, suggest_review_edits
 from .import_openai import validate_api_key as validate_openai_key, validate_model as validate_openai_model
@@ -47,6 +48,8 @@ SOURCES = ("csv", "pdf", "amazon")
 BANK_SOURCES = {"csv", "pdf"}
 GENERIC_PAYMENT_WORDS = {"bank", "card", "credit", "debit", "expense", "mastercard", "online", "payment",
                          "pos", "purchase", "sepa", "transaction", "transfer", "visa"}
+AMAZON_RETAIL = re.compile(r"(?:amazon|amzn)(?: (?:marketplace|mktplace|mktp|payments?|pmts))*"
+                           r"(?: (?:com|it|nl|de|fr|es|co uk|ie|eu|se|be|uk|us|bill|sarl))*")
 DATE_FIELDS = ("auto", "dmy", "mdy", "ymd")
 AMOUNT_MODES = ("debit-negative", "debit-positive", "separate")
 DEFAULT_IMPORT_CATEGORIES = {"expense": "Other expenses", "income": "Other income"}
@@ -804,10 +807,27 @@ def _openai_totals(extraction, rows):
 
 def _merchant_key(value):
     name = unicodedata.normalize("NFKC", value).casefold()
+    name = re.sub(r"^\s*(?:paypal|stripe)\s*[*:]\s*", "", name)
     name = re.split(r"\b(?:loc|location|store|filiaal)\s+\d+\b", name, maxsplit=1)[0]
     words = re.findall(r"[^\W_]+", name)
     ignored = GENERIC_PAYMENT_WORDS | {"sumup", "ccv", "nld", "ita"}
-    return " ".join(word for word in words if word not in ignored and not any(char.isdigit() for char in word))
+    merchant = " ".join(word for word in words if word not in ignored and not any(char.isdigit() for char in word))
+    if AMAZON_RETAIL.fullmatch(merchant) or merchant == "amazon payments europe":
+        return "amazon"
+    return {"amzn prime": "amazon prime", "amazon web services": "aws"}.get(merchant, merchant)
+
+
+def _merchant_search_query(description, merchant):
+    if not merchant or not all(char.isalpha() or char in " -&'’" for char in merchant):
+        return ""
+    words = _merchant_key(merchant).split()
+    if not 1 <= len(words) <= 5 or sum(map(len, words)) < 3:
+        return ""
+    data = re.split(r"\b(?:iban|bic|ref(?:erence)?|account|order|invoice|memo)\b", description, maxsplit=1, flags=re.I)[0]
+    if re.search(r"\b(?:sepa|transfer|bonifico|overschrijving)\b", data, re.I):
+        return ""
+    query = " ".join(words)
+    return query if f" {query} " in f" {_merchant_key(data)} " else ""
 
 
 class _CategoryHistory:
@@ -823,6 +843,9 @@ class _CategoryHistory:
         self.exact = defaultdict(list)
         self.merchants = defaultdict(list)
         self.related = defaultdict(list)
+        self.named = defaultdict(list)
+        for ident, item in self.categories.items():
+            self.named[item["kind"], _merchant_key(item["name"])].append(ident)
         for entry in reversed(ledger.entries):
             if entry["id"] <= 0 or entry["category_id"] not in self.categories:
                 continue
@@ -834,14 +857,22 @@ class _CategoryHistory:
                 self.merchants[kind, merchant].append(record)
                 self.related[kind, merchant.split()[0]].append(record)
 
-    def suggest(self, kind, name):
+    def choices(self, kind, name):
         merchant = _merchant_key(name)
         if not merchant:
-            return None, False
-        matches = self.exact.get((kind, _normalized_header(name))) or self.merchants.get((kind, merchant), ())
-        local = [category for account, category, _ in matches if account == self.account_id]
-        choices = set(local) if local else {category for _, category, _ in matches}
-        return (next(iter(choices)), False) if len(choices) == 1 else (None, len(choices) > 1)
+            return []
+        exact = self.exact.get((kind, _normalized_header(name)), ())
+        variants = self.merchants.get((kind, merchant), ())
+        for matches in (exact, variants):
+            local = Counter(category for account, category, _ in matches if account == self.account_id)
+            if local:
+                return [category for category, _ in local.most_common()]
+        return [category for category, _ in Counter(category for _, category, _ in exact or variants).most_common()]
+
+    def named_category(self, kind, merchant):
+        key = _merchant_key(merchant)
+        choices = self.named.get((kind, key), ()) if key else ()
+        return choices[0] if len(choices) == 1 else None
 
     def examples(self, kind, name):
         merchant = _merchant_key(name)
@@ -866,7 +897,19 @@ def _review_categories(database, data, key_store, user_id):
     with database.connection(snapshot=True) as conn:
         _set_account(conn, account_id)
         history = _CategoryHistory(database.ledger(conn), account_id)
-    suggestions, pending, ids = [], {}, set()
+    suggestions, conflicts, pending, ids = [], [], {}, set()
+
+    def apply_match(ident, kind, merchant):
+        choices = history.choices(kind, merchant)
+        if len(choices) > 1:
+            conflicts.append({"id": ident, "category_ids": choices})
+            return True
+        category = choices[0] if choices else history.named_category(kind, merchant)
+        if category is None:
+            return False
+        suggestions.append({"id": ident, "category_id": category, "source": "history" if choices else "merchant"})
+        return True
+
     for row in supplied:
         if not isinstance(row, dict) or type(row.get("id")) is not int or row["id"] < 1 or row["id"] in ids:
             raise ApiError("Choose distinct draft rows for category suggestions.", "rows")
@@ -877,32 +920,48 @@ def _review_categories(database, data, key_store, user_id):
         if not cents:
             raise ApiError("Enter a nonzero amount before suggesting a category.", "amount")
         kind = "expense" if cents < 0 else "income"
-        category, conflict = history.suggest(kind, name)
-        if category is not None:
-            suggestions.append({"id": ident, "category_id": category})
-        elif not conflict:
+        if _merchant_key(name) and not apply_match(ident, kind, name):
             pending[ident] = {"id": ident, "name": name, "kind": kind, "examples": history.examples(kind, name)}
-    response = {"suggestions": suggestions, "notices": []}
+    response = {"suggestions": suggestions, "conflicts": conflicts, "notices": []}
     if pending and history.categories:
         api_key, remember_key = _ai_key(data, key_store, user_id, validate_openai_key)
-        instruction = ("Suggest only category_id edits. Prefer consistent past examples for the same merchant. "
-                       "Without relevant history, assign a category only if the description clearly identifies the activity "
-                       "and exactly one supplied category fits its kind. Leave any ambiguous merchant, payment processor, "
-                       "or conflicting history unchanged. List the specific row IDs for each suggestion. Do not change other fields.")
-        context = {"rows": list(pending.values()), "categories": list(history.categories.values())}
-        edited = suggest_review_edits(instruction, context, api_key=api_key, model=model)
-        proposed = {}
-        for update in edited["updates"]:
-            if set(update) != {"rows", "category_id"} or update["rows"] is None:
-                continue
-            value = update["category_id"]
-            category = history.categories.get(int(value)) if re.fullmatch(r"[0-9]{1,18}", value) else None
-            if category:
-                for ident in update["rows"]:
-                    if ident in pending and pending[ident]["kind"] == category["kind"]:
-                        proposed.setdefault(ident, set()).add(category["id"])
-        suggestions.extend({"id": ident, "category_id": next(iter(categories))}
-                           for ident, categories in proposed.items() if len(categories) == 1)
+        categories = list(history.categories.values())
+
+        def apply_inference(rows, source):
+            inferred = categorize_merchants(list(rows.values()), categories, api_key=api_key, model=model)
+            unresolved = {}
+            for ident, decision in inferred.items():
+                row = rows[ident]
+                kind, merchant = row["kind"], decision["merchant"]
+                if merchant and apply_match(ident, kind, merchant):
+                    continue
+                category = history.categories.get(decision["category_id"])
+                if merchant and category and category["kind"] == kind:
+                    suggestions.append({"id": ident, "category_id": category["id"], "source": source})
+                elif query := _merchant_search_query(row["name"], merchant):
+                    unresolved.setdefault(query, []).append(ident)
+            return unresolved
+
+        unresolved = apply_inference(pending, "ai")
+        if unresolved and data.get("merchant_web_search") is True:
+            queries = {ids[0]: query for query, ids in list(unresolved.items())[:MERCHANT_LOOKUP_LIMIT]}
+            if len(unresolved) > MERCHANT_LOOKUP_LIMIT:
+                response["notices"].append(f"Web lookup can check up to {MERCHANT_LOOKUP_LIMIT} unfamiliar merchants per batch.")
+            try:
+                facts = look_up_merchants([{"id": ident, "query": query} for ident, query in queries.items()],
+                                          api_key=api_key, model=model)
+                researched = {}
+                for ident, fact in facts.items():
+                    if not fact["merchant"] or not fact["business_type"]:
+                        continue
+                    for row_id in unresolved[queries[ident]]:
+                        row = pending[row_id]
+                        if not apply_match(row_id, row["kind"], fact["merchant"]):
+                            researched[row_id] = dict(row, merchant_facts=fact)
+                if researched:
+                    apply_inference(researched, "web")
+            except ApiError as error:
+                response["notices"].append(f"Merchant lookup could not finish. {error}")
         if remember_key:
             _remember_ai_key(key_store, user_id, api_key, "OpenAI", response["notices"])
     if key_store:
@@ -1049,7 +1108,10 @@ def _preview(database, data, today, *, key_store=None, user_id=None):
                         if candidate not in bank_claimed:
                             automatic = candidate
 
-            category, category_conflict = category_history.suggest("expense" if cents < 0 else "income", description) if cents and description else (None, False)
+            kind = "expense" if cents and cents < 0 else "income"
+            choices = category_history.choices(kind, description) if cents else []
+            named = category_history.named_category(kind, description) if cents and not choices else None
+            category = choices[0] if len(choices) == 1 else named
             pending.append(({
                 "line": index, "name": name, "posted_on": posted.isoformat() if posted else "",
                 "amount": None if cents is None else str(cents), "reference": reference,
@@ -1057,7 +1119,8 @@ def _preview(database, data, today, *, key_store=None, user_id=None):
                 "currency_unconfirmed": currency_unconfirmed,
                 "errors": errors, "blocked": blocked, "existing": saved, "matches": match_rows,
                 "commitments": rule_matches, "expected": repayment_matches,
-                "suggested_category_id": category, "category_conflict": category_conflict,
+                "suggested_category_id": category, "category_conflict": len(choices) > 1,
+                "category_history": choices, "category_source": "history" if len(choices) == 1 else "merchant" if named else None,
                 "page": evidence.get("page"), "evidence": _clean(evidence.get("evidence"), 160),
                 "statement_description": statement_description if openai else "",
                 **({"csv_source": " · ".join(f"{header}: {_clean(cell, 100)}" for header, cell in zip(headers, row)

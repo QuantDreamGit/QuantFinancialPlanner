@@ -244,9 +244,9 @@ export const topicGroups = [
             title: "Review and submit the table",
             steps: [
               "Import statements for each account separately. Edit posting dates, descriptions, signed amounts, and categories in the table. Verified matches preserve the existing transaction’s category, labels, notes, and documents.",
-              "Quant prefills categories from matching past transactions. Rows with an uncertain category start as No category. You can assign a category or import them as they are.",
-              "Choose Suggest categories with OpenAI when setting up an OpenAI import or in the prompt editor. Quant shares uncategorized descriptions, category names, and relevant past descriptions for this step.",
-              "Open Edit table with a prompt to describe changes across the draft, such as filling missing dates, renaming descriptions, categorizing purchases, skipping rows, or sorting. Quant sends your prompt, editable rows, and available category and match options to OpenAI. Check the highlighted edits, or use Undo last prompt edit.",
+              "Quant recognizes common merchant aliases and prefills categories when past choices agree. When they disagree, the previous choices appear first and the row stays uncategorized.",
+              "Choose Suggest categories with OpenAI in the import review. Quant shares uncategorized descriptions, category names, and relevant past descriptions. Enable web lookup to search for unfamiliar businesses using shortened merchant names.",
+              "Open Categorize or edit with OpenAI to describe changes across the draft, such as filling missing dates, renaming descriptions, categorizing purchases, skipping rows, or sorting. Quant sends your prompt, editable rows, and available category and match options to OpenAI. Check the highlighted edits, or use Undo last prompt edit.",
               "Use Details to compare a row with its source or a proposed match. Choose how to handle ambiguous matches and use Skip row to leave out a transaction.",
               "Select Import transactions to submit the table. Quant clears the preview and confirms how many transactions were imported. Open Recent imports to see what was recorded.",
             ],
