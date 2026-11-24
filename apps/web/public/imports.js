@@ -28,12 +28,11 @@ const otherMovementKinds = new Set(["transfer", "investment", "valuation", "sett
 const otherMovementActions = new Set(["transfer", "settle", "expected"]);
 const archiveEndpoint = endpoint + "documents";
 const fileSize = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 });
-const reviewGroups = {
-  ready: ["Ready", "New transactions with clear details and verified matches."],
-  matches: ["Proposed matches", "Compare the statement and ledger before applying a proposed match."],
-  review: ["Needs review", "Check repeated rows, extracted values and rows with unresolved details."],
-  handled: ["Already handled", "These rows have already been recorded or reconciled."],
-};
+const matchFields = { link: "entry_id", commitment: "commitment", expected: "expected_id" };
+
+function included(row) {
+  return row.existing == null && !row.blocked && row.action !== "skip";
+}
 
 function select(pairs, value) {
   const node = element("select");
@@ -120,10 +119,10 @@ function rowExport(row) {
 }
 
 function parsedCents(value) {
-  const match = /^([+−-]?)(\d+)(?:[.,](\d{1,2}))?$/.exec(value.trim());
+  const match = /^([+-]?)(\d+)(?:[.,](\d{1,2}))?$/.exec(value.trim());
   if (!match) return null;
   const magnitude = BigInt(match[2]) * 100n + BigInt((match[3] ?? "").padEnd(2, "0"));
-  return match[1] === "-" || match[1] === "−" ? -magnitude : magnitude;
+  return match[1] === "-" ? -magnitude : magnitude;
 }
 
 function pdfSpending(rows) {
@@ -240,7 +239,7 @@ function mergePdfRows(rows) {
     if (matches.length < 2) continue;
     for (const row of matches) {
       row.matchOverlap = "Another statement row matches this ledger transaction. Compare the original statements.";
-      if (!row.overlap) row.review_group = "matches";
+      row.action = "";
     }
   }
   return merged;
@@ -332,8 +331,9 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     archiveBox.scrollIntoView({ block: "start" });
     archiveBox.focus({ preventScroll: true });
   }, "secondary", "paperclip"));
-  const status = element("p", "notice");
+  const status = element("p", "notice imports-status");
   status.hidden = true;
+  status.tabIndex = -1;
   status.setAttribute("role", "status");
   const settings = panel("Choose statements or an export");
   const grid = element("div", "field-grid imports-settings");
@@ -400,6 +400,7 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     label("Import name (optional)", importName), pdfMethodLabel, delimiterLabel, dateLabelNode, modeLabel);
   settings.append(grid, info, ocrLabel, aiPanel, mappingPanel, settingsActions);
   const resultBox = element("div");
+  resultBox.hidden = true;
   const archiveBox = panel("Original PDF statements");
   archiveBox.tabIndex = -1;
   const archiveContent = element("div", "imports-archive");
@@ -411,13 +412,14 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
   historyBox.append(history);
   root.replaceChildren(heading, status, settings, resultBox, archiveBox, historyBox);
 
-  let setup, headers, mapping = {}, sourceFile, encoded, result, previewName, busy = false, page = 0, group = "ready";
+  let setup, headers, mapping = {}, sourceFile, encoded, result, previewName, busy = false, page = 0;
   let archiveRequest;
   let editingKey = false;
   const controls = [source, account, file, importName, pdfMethod, consent, apiKey, delimiters, dates, amountMode, ocr];
-  function setStatus(text = "") {
+  function setStatus(text = "", tone = "") {
     status.textContent = text;
     status.hidden = !text;
+    status.dataset.tone = tone;
   }
 
   function showError(error) {
@@ -585,10 +587,13 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     result = null;
     previewName = null;
     resultBox.replaceChildren();
+    resultBox.hidden = true;
+    settings.hidden = false;
     setStatus();
     if (discardMapping) {
       headers = null;
       mapping = {};
+      lastSamples = [];
       mappingPanel.replaceChildren();
     }
   }
@@ -740,7 +745,7 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     return details;
   }
 
-  async function open() {
+  async function open({ reportError = true } = {}) {
     try {
       setup = await api(endpoint + "setup");
       options(account, setup.accounts.filter(item => item.kind !== "investment").map(item => [item.id, item.name]),
@@ -750,7 +755,7 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
         : [element("p", "muted", "Reviewed imports will be listed here.")]));
       syncSource(true);
     } catch (error) {
-      showError(error);
+      if (reportError) showError(error);
     }
     await loadArchive();
   }
@@ -823,9 +828,10 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
 
   function normalize(row, fileResult, fileIndex) {
     const candidates = row.matches.filter(candidate => !candidate.reconciled);
-    const match = candidates.find(candidate => candidate.id === row.auto_match) ?? candidates[0];
-    const payment = row.expected.length;
-    const commitment = row.commitments.length;
+    const match = candidates.find(candidate => candidate.id === row.auto_match)
+      ?? (candidates.length === 1 ? candidates[0] : null);
+    const payment = row.expected.length === 1 ? row.expected[0] : null;
+    const commitment = row.commitments.length === 1 ? row.commitments[0] : null;
     const value = row.amount === null ? "" : euros(row.amount);
     return {
       ...row,
@@ -835,12 +841,12 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
         file: fileResult.filename, archive_id: fileResult.document?.id ?? null,
         page: row.page ?? null, evidence: row.evidence ?? null, line: row.line, description: row.statement_description || row.name,
       }] } : {}),
-      selected: false,
       currency_confirmed: false,
-      action: match ? "link" : payment ? "expected" : commitment ? "commitment" : "create",
+      action: row.auto_match != null ? "link"
+        : candidates.length || row.expected.length || row.commitments.length ? "" : "create",
       entry_id: match ? String(match.id) : "",
-      expected_id: payment ? String(row.expected[0].id) : "",
-      commitment: commitment ? row.commitments[0].id + "|" + row.commitments[0].date : "",
+      expected_id: payment ? String(payment.id) : "",
+      commitment: commitment ? commitment.id + "|" + commitment.date : "",
       other_account_id: "", person_id: "",
       category_id: row.suggested_category_id != null ? String(row.suggested_category_id) : "",
     };
@@ -858,6 +864,7 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     const name = effectiveName();
     setStatus();
     setBusy(true);
+    let loaded = false;
     try {
       const input = { name, account_id: account.value };
       if (!provider) Object.assign(input, { date_format: dates.value, amount_mode: amountMode.value });
@@ -873,12 +880,16 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
       }
       editingKey = false;
       page = 0;
-      group = "ready";
+      loaded = true;
     } catch (error) {
       showError(error);
     } finally {
       setBusy(false);
       renderPreview();
+      if (loaded) {
+        settings.hidden = true;
+        resultBox.querySelector("h2").focus();
+      }
     }
   }
 
@@ -913,12 +924,15 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     if (documents.size || input.pdf_method === "openai") void loadArchive();
   }
 
-  function actionFields(row, container, updateRow) {
+  function actionFields(row, container, rowLabel, updateRow) {
     container.replaceChildren();
     function addChoices(heading, key, pairs) {
-      const control = select([["", "Choose " + heading.toLowerCase()], ...pairs], row[key]);
+      const prompt = key === "category_id" ? "No category" : "Choose " + heading.toLowerCase();
+      const control = select([["", prompt], ...pairs], row[key]);
+      control.setAttribute("aria-label", heading + " for " + rowLabel);
+      if (key === "category_id") control.disabled = !pairs.length;
       control.addEventListener("change", () => { row[key] = control.value; updateRow(); });
-      container.append(label(heading, control));
+      container.append(control);
     }
     if (row.action === "link") {
       addChoices("Existing transaction", "entry_id", row.matches.filter(item => !item.reconciled)
@@ -949,12 +963,6 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     return row.review_group === "ready" && row.action === "create";
   }
 
-  function canSelectPdfRow(row) {
-    return row.existing === null && !row.blocked && !row.errors.length && !row.review_hold && !row.overlap
-      && !row.matchOverlap && row.action === "create"
-      && !row.matches.length && !row.commitments.length && !row.expected.length && !isBulkReady(row);
-  }
-
   function compareMatch(row, container) {
     const ledgerMatch = row.matches.find(item => String(item.id) === row.entry_id);
     const commitmentMatch = row.commitments.find(item => item.id + "|" + item.date === row.commitment);
@@ -965,8 +973,10 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
       expected: settlementMatch && ["Scheduled settlement", "@" + settlementMatch.tag, settlementMatch.date, settlementMatch],
     };
     const reconciled = row.matches.find(item => item.reconciled);
-    const proposed = choices[row.action] ?? choices.link ?? choices.commitment ?? choices.expected
-      ?? (reconciled && ["Already linked transaction", reconciled.name, reconciled.posted_on, reconciled]);
+    const suggested = choices.link || choices.commitment || choices.expected;
+    const proposed = row.existing != null && reconciled
+      ? ["Already linked transaction", reconciled.name, reconciled.posted_on, reconciled]
+      : row.action === "" ? suggested : choices[row.action];
     container.replaceChildren();
     container.hidden = !proposed;
     if (!proposed) return;
@@ -999,107 +1009,160 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     container.append(statement, existing);
   }
 
-  function rowNode(row, updateCount, updateSpending) {
-    const section = element("article", "imports-row");
-    const head = element("div", "imports-row-heading");
-    const pick = element("input");
-    pick.type = "checkbox";
-    pick.checked = row.selected;
-    const readOnly = !!row.existing || row.blocked || busy;
-    const rowSource = row.origins?.[0];
-    const rowLabelText = "row " + row.line + (rowSource ? " in " + rowSource.file : "");
-    pick.setAttribute("aria-label", "Select " + rowLabelText);
-    const rowLabel = element("label", "imports-check");
-    rowLabel.append(pick, element("strong", "", "Row " + row.line));
-    const tag = element("span", "muted");
-    const comparison = element("div", "imports-match");
-    const updateRow = () => {
-      const confirmCurrency = row.currency_unconfirmed && !row.currency_confirmed;
-      pick.disabled = readOnly || confirmCurrency;
-      let label = row.appliedLabel || "";
-      if (row.blocked) label = "Currency unsupported";
-      else if (confirmCurrency && !row.existing) label = "Confirm the currency before selecting";
-      else if (!row.existing && (row.review_group === "ready" || row.auto_match != null)) {
-        if (!isBulkReady(row)) label = "Changed · apply individually";
-        else if (row.action === "link") label = "Verified match";
+  function reviewIssue(row, openingDate) {
+    if (!row.action) return "Choose how to record or match this transaction.";
+    if (!row.posted_on || row.posted_on > setup.today) return "Enter a date on or before " + dateLabel(setup.today) + ".";
+    if (openingDate && row.posted_on < openingDate) return "Enter a date on or after " + dateLabel(openingDate) + ".";
+    if (!row.name.trim()) return "Enter a description.";
+    const cents = parsedCents(row.value);
+    if (!cents || cents <= -(2n ** 63n) || cents >= 2n ** 63n) return "Enter a nonzero euro amount with up to two decimal places.";
+    if (row.currency_unconfirmed && !row.currency_confirmed) return "Confirm the currency is EUR.";
+    if (row.action === "create" && result.source === "amazon" && cents > 0n) return "Enter a negative amount for the confirmed charge.";
+    if (row.action === "transfer" && !row.other_account_id) return "Choose the other account.";
+    if (row.action === "settle" && !row.person_id) return "Choose the person for the settlement.";
+    const field = matchFields[row.action];
+    if (field && !row[field]) return "Choose the transaction or scheduled payment to match.";
+    const match = row.action === "link" ? row.matches.find(item => String(item.id) === row.entry_id)
+      : row.action === "commitment" ? row.commitments.find(item => item.id + "|" + item.date === row.commitment)
+        : row.action === "expected" ? row.expected.find(item => String(item.id) === row.expected_id) : null;
+    if (match && BigInt(match.amount) !== cents) return "The amount differs from the chosen match.";
+    return "";
+  }
+
+  function draftIssues(rows) {
+    const issues = new Map();
+    const fingerprints = new Map();
+    const targets = new Map();
+    const openingDate = setup.accounts.find(item => String(item.id) === account.value)?.opened_on;
+    function checkDuplicate(index, key, row, issue) {
+      if (index.has(key)) {
+        issues.set(index.get(key), issue);
+        issues.set(row, issue);
+      } else {
+        index.set(key, row);
       }
-      tag.textContent = label;
-      compareMatch(row, comparison);
-      updateCount();
-    };
-    head.append(rowLabel, tag);
-    pick.addEventListener("change", () => { row.selected = pick.checked; updateCount(); });
-    const values = element("div", "imports-row-values");
-    const date = textInput(row.posted_on, "Posting date for row " + row.line, "date");
+    }
+    for (const row of rows) {
+      const issue = reviewIssue(row, openingDate);
+      if (issue) issues.set(row, issue);
+      if (row.review_key) checkDuplicate(fingerprints, row.review_key, row, "Choose Skip row on repeated copies of this transaction.");
+      const field = matchFields[row.action];
+      if (field && row[field]) {
+        checkDuplicate(targets, row.action + "|" + row[field], row, "Another row has the same match. Choose a different action or match.");
+      }
+    }
+    return issues;
+  }
+
+  function rowNode(row, index, updateDraft, updateSpending) {
+    const line = element("tr");
+    line.dataset.importRow = index;
+    const rowLabel = "row " + row.line + (row.origins?.[0] ? " in " + row.origins[0].file : "");
+    const immutable = row.existing != null || row.blocked;
+    const date = textInput(row.posted_on, "Posting date for " + rowLabel, "date");
     date.max = setup.today;
-    const name = textInput(row.name, "Description for row " + row.line);
+    const name = textInput(row.name, "Description for " + rowLabel);
     name.maxLength = 100;
-    const amount = textInput(row.value, "Signed amount for row " + row.line);
+    const amount = textInput(row.value, "Signed amount for " + rowLabel);
     amount.inputMode = "decimal";
     amount.maxLength = 28;
-    const rowActions = [["create", result.source === "amazon" ? "Record confirmed charge" : "Record transaction"]];
-    if (row.matches.some(item => !item.reconciled)) rowActions.push(["link", "Link existing transaction"]);
+    const rowActions = [];
+    if (!row.action) rowActions.push(["", "Choose action"]);
+    rowActions.push(["create", result.source === "amazon" ? "Record charge" : "Record new"]);
+    if (row.matches.some(item => !item.reconciled)) rowActions.push(["link", "Link existing"]);
     if (result.source !== "amazon") {
-      if (row.commitments.length) rowActions.push(["commitment", "Match a scheduled commitment"]);
-      if (row.expected.length) rowActions.push(["expected", "Record a scheduled settlement"]);
+      if (row.commitments.length) rowActions.push(["commitment", "Match commitment"]);
+      if (row.expected.length) rowActions.push(["expected", "Scheduled settlement"]);
       if (setup.accounts.length > 1) rowActions.push(["transfer", "Internal transfer"]);
-      if (setup.people.length) rowActions.push(["settle", "Record a shared settlement"]);
+      if (setup.people.length) rowActions.push(["settle", "Shared settlement"]);
     }
+    rowActions.push(["skip", "Skip row"]);
     const treatment = select(rowActions, row.action);
-    const extra = element("div", "imports-row-extra");
-    values.append(label("Posting date", date), label("Description", name), label("Signed amount (€)", amount), label("Action", treatment));
-    for (const node of [date, name, amount, treatment]) node.disabled = readOnly;
-    date.addEventListener("input", () => { row.posted_on = date.value; updateRow(); });
-    name.addEventListener("input", () => { row.name = name.value; updateRow(); });
-    date.addEventListener("change", updateSpending);
-    name.addEventListener("change", updateSpending);
+    treatment.setAttribute("aria-label", "Action for " + rowLabel);
+    treatment.disabled = busy;
+    const extra = element("td", "imports-review-target");
+    const comparison = element("div", "imports-match");
+    const notes = [sourceLabel(row), row.reference && "Reference " + row.reference,
+      row.overlap, row.matchOverlap].filter(Boolean);
+    const warnings = row.errors.filter(issue => !(row.currency_unconfirmed && issue === "Confirm that this row is in euros."));
+    if (row.review_hold) warnings.push("Check the extracted amounts against the totals printed on this statement.");
+    if (row.matches.length && !row.matches.some(item => !item.reconciled) && !immutable) {
+      warnings.push("A similar transaction already matches another row in this source.");
+    }
+    const details = element("tr", "imports-review-details");
+    const content = element("td");
+    content.colSpan = 6;
+    const detailBody = element("div", "imports-review-detail-body");
+    detailBody.append(element("strong", "", "Source " + rowLabel));
+    for (const note of notes) detailBody.append(element("p", "muted", note));
+    for (const origin of row.origins ?? []) {
+      const excerpt = origin.evidence || origin.description;
+      if (excerpt) detailBody.append(element("p", "", row.origins.length > 1 ? origin.file + " · " + excerpt : excerpt));
+    }
+    if (warnings.length) detailBody.append(element("p", "", "Source notes"), element("p", "muted", warnings.join(" ")));
+    detailBody.append(comparison);
+    content.append(detailBody);
+    details.append(content);
+    details.id = "import-row-details-" + index;
+    details.hidden = !row.detailsOpen;
+    const toggle = action("Details", () => {
+      row.detailsOpen = details.hidden;
+      details.hidden = !row.detailsOpen;
+      toggle.setAttribute("aria-expanded", String(row.detailsOpen));
+    }, "text-button");
+    toggle.setAttribute("aria-label", "Details for " + rowLabel);
+    toggle.setAttribute("aria-controls", details.id);
+    toggle.setAttribute("aria-expanded", String(Boolean(row.detailsOpen)));
+    toggle.hidden = !notes.length && !warnings.length && !row.matches.length && !row.commitments.length && !row.expected.length;
+    const issueNode = element("span", "imports-review-issue");
+    issueNode.tabIndex = -1;
+    const reviewCell = element("td", "imports-review-state");
+    reviewCell.append(issueNode, toggle);
+    const updateMatch = () => {
+      compareMatch(row, comparison);
+      updateDraft();
+    };
+    const updateAction = () => {
+      for (const input of [date, name, amount]) input.disabled = immutable || busy || row.action === "skip";
+      if (!immutable && row.action !== "skip") {
+        actionFields(row, extra, rowLabel, () => { updateMatch(); updateSpending(); });
+        const target = extra.querySelector("select");
+        if (target && busy) target.disabled = true;
+      } else {
+        extra.replaceChildren();
+      }
+    };
+    for (const [input, key] of [[date, "posted_on"], [name, "name"], [amount, "value"]]) {
+      input.addEventListener("input", () => { row[key] = input.value; updateMatch(); });
+      input.addEventListener("change", updateSpending);
+    }
     amount.addEventListener("change", () => {
-      row.value = amount.value;
-      row.category_id = "";
-      actionFields(row, extra, updateAction);
-      updateSpending();
+      const category = setup.categories.find(item => String(item.id) === row.category_id);
+      if (category && category.kind !== (parsedCents(row.value) < 0n ? "expense" : "income")) {
+        row.category_id = "";
+        updateAction();
+      }
     });
-    amount.addEventListener("input", () => { row.value = amount.value; updateRow(); });
-    const updateAction = () => { updateRow(); updateSpending(); };
     treatment.addEventListener("change", () => {
       row.action = treatment.value;
-      actionFields(row, extra, updateAction);
+      if (treatment.options[0].value === "" && row.action) treatment.options[0].remove();
       updateAction();
+      updateMatch();
+      updateSpending();
     });
-    if (!readOnly) actionFields(row, extra, updateAction);
-    section.append(head, comparison, values, extra);
-    if (row.currency_unconfirmed) {
-      const currency = element("input");
-      currency.type = "checkbox";
-      currency.checked = row.currency_confirmed;
-      currency.disabled = readOnly;
-      currency.addEventListener("change", () => {
-        row.currency_confirmed = currency.checked;
-        if (!row.currency_confirmed) row.selected = pick.checked = false;
-        updateRow();
-        updateSpending();
-      });
-      const confirm = element("label", "imports-check imports-row-currency");
-      confirm.append(currency, "Confirm this row is in euros");
-      section.append(confirm);
-    }
-    updateRow();
-    if (rowSource) {
-      const evidence = element("details", "imports-row-source");
-      evidence.append(element("summary", "", sourceLabel(row)));
-      for (const origin of row.origins) {
-        const heading = origin.file + (origin.page ? " · Page " + origin.page : "");
-        evidence.append(element("p", "muted", heading), element("p", "", origin.evidence || origin.description));
-      }
-      section.append(evidence);
-    }
-    if (row.overlap || row.matchOverlap) section.append(element("p", "muted", row.overlap || row.matchOverlap));
-    if (row.reference) section.append(element("p", "muted", "Reference " + row.reference));
-    if (row.errors.length && !row.existing) section.append(element("p", "muted", row.errors.join(" ")));
-    if (!row.matches.some(item => !item.reconciled) && row.matches.length && !row.existing) {
-      section.append(element("p", "muted", "A similar transaction already matches another row in this source."));
-    }
-    return section;
+    updateAction();
+    compareMatch(row, comparison);
+    const choice = immutable ? element("span", "muted", row.blocked ? "Excluded" : "Already handled") : treatment;
+    line.append(element("td", "imports-review-date", date), element("td", "imports-review-name", name),
+      element("td", "imports-review-amount", amount), element("td", "imports-review-action", choice), extra, reviewCell);
+    return { line, details, showIssue(issue) {
+      line.classList.toggle("imports-review-excluded", !included(row));
+      issueNode.classList.toggle("imports-review-invalid", Boolean(issue));
+      const hasWarning = warnings.length || row.overlap || row.matchOverlap;
+      issueNode.textContent = issue || (row.blocked ? row.currency + " unsupported"
+        : row.existing != null ? row.appliedLabel || ""
+          : row.action === "skip" ? "Skipped" : hasWarning ? "Check source" : isBulkReady(row) && row.action === "link" ? "Verified match" : "");
+    } };
   }
 
   function makePayload(row) {
@@ -1110,63 +1173,70 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
       entry_id: row.entry_id ? Number(row.entry_id) : null, rule_id: rule, due_on: due,
       expected_id: row.expected_id, other_account_id: row.other_account_id, person_id: row.person_id,
       currency_confirmed: row.currency_unconfirmed && row.currency_confirmed ? true : undefined,
+      verify_ready: isBulkReady(row) ? true : undefined,
     };
   }
 
-  async function commit(readyOnly = false) {
-    if (busy) return;
-    const rows = result.rows.filter(row => readyOnly ? isBulkReady(row) : row.selected);
-    if (!rows.length) return;
-    setStatus();
-    if (result.source === "pdf") {
-      const fingerprints = rows.filter(row => row.review_key).map(row => row.review_key);
-      const ledgerLinks = rows.filter(row => row.action === "link" && row.entry_id).map(row => row.entry_id);
-      if (new Set(fingerprints).size !== fingerprints.length || new Set(ledgerLinks).size !== ledgerLinks.length) {
-        setStatus("Select one row for each repeated statement transaction or ledger match.");
-        status.scrollIntoView({ block: "nearest" });
-        return;
-      }
-    }
+  async function commit() {
+    if (busy || !result) return;
+    const rows = result.rows.filter(included);
+    if (draftIssues(rows).size) return;
+    const skipped = result.rows.filter(row => row.existing == null && !included(row)).length;
+    const failedFiles = result.files?.filter(item => item.error).length ?? 0;
+    setStatus(rows.length ? "Importing " + countLabel(rows.length, "transaction") + "…" : "", "progress");
     setBusy(true);
     renderPreview();
-    let added = 0, linked = 0, other = 0, already = 0;
-    let failed;
+    let saved = 0, linked = 0, already = 0;
     try {
       for (let start = 0; start < rows.length; start += commitSize) {
         const batch = rows.slice(start, start + commitSize);
         const response = await api(endpoint + "commit", { method: "POST", data: {
-          rows: batch.map(makePayload), ready_only: readyOnly, name: result.name,
+          rows: batch.map(makePayload), name: result.name,
         } });
         for (const [index, record] of response.rows.entries()) {
           const row = batch[index];
           if (record.existing) already++;
-          else if (record.action === "link") linked++;
-          else if (record.action === "create") added++;
-          else other++;
+          else {
+            saved++;
+            if (record.action === "link") linked++;
+          }
           row.existing = record.entry_id;
           row.appliedLabel = record.existing ? "Already handled"
-            : record.action === "link" ? "Linked to existing transaction"
-              : record.action === "create" ? "New transaction recorded" : "Applied";
-          row.review_group = "handled";
-          row.selected = false;
+            : record.action === "link" ? "Linked" : "Imported";
         }
       }
     } catch (error) {
-      failed = error;
+      setBusy(false);
+      renderPreview();
+      const progress = saved + already;
+      setStatus((progress ? countLabel(progress, "row") + " processed before the error. " : "") + apiMessage(error));
+      status.focus();
+      if (progress) {
+        void open({ reportError: false });
+        onChange();
+      }
+      return;
     }
-    if (added + linked + other + already) {
-      notify([added && countLabel(added, "new transaction") + " recorded", linked && countLabel(linked, "existing transaction") + " linked",
-        other && countLabel(other, "other row") + " applied", already && already + " already handled"]
-        .filter(Boolean).join(" · ") + ".");
-      await open();
+    const handled = result.rows.length - rows.length - skipped + already;
+    discardPreview(true);
+    importName.value = "";
+    file.value = "";
+    sourceFile = encoded = null;
+    resetConsent();
+    setBusy(false);
+    const summary = [
+      saved ? countLabel(saved, "transaction") + " imported." : "No new transactions to import.",
+      linked && countLabel(linked, "existing transaction") + " linked.",
+      handled && countLabel(handled, "row") + " already handled.",
+      skipped && countLabel(skipped, "row") + " skipped.",
+      failedFiles && countLabel(failedFiles, "PDF") + " could not be extracted.",
+    ].filter(Boolean).join(" ");
+    setStatus(summary, failedFiles ? "warning" : "success");
+    status.focus();
+    if (saved + already) {
+      void open({ reportError: false });
       onChange();
     }
-    setBusy(false);
-    renderPreview();
-    if (failed) {
-      showError(failed);
-      status.scrollIntoView({ block: "nearest" });
-    } else resultBox.querySelector(".imports-groups [aria-pressed=true]")?.focus({ preventScroll: true });
   }
 
   function renderPdfFiles(files, feedback) {
@@ -1221,107 +1291,140 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
 
   function renderPreview() {
     if (!result) return;
-    const section = panel("Review inbox");
+    const section = panel("Review transactions");
+    const heading = section.firstElementChild;
+    heading.tabIndex = -1;
+    const header = element("div", "imports-review-header");
+    const headingGroup = element("div");
     previewName = element("p", "imports-batch-name");
     previewName.textContent = previewLabel(result);
-    section.append(previewName);
+    headingGroup.append(heading, previewName);
+    const editSettings = action("Import settings", () => {
+      settings.hidden = false;
+      source.focus();
+    });
+    editSettings.disabled = busy;
+    header.append(headingGroup, editSettings);
+    section.append(header);
     for (const notice of result.notices) section.append(element("p", "muted imports-explanation", notice));
     const downloadStatus = element("p", "muted imports-download-status");
     downloadStatus.setAttribute("role", "status");
     const spending = element("section", "imports-spending");
     const updateSpending = () => { if (result.source === "pdf") renderPdfSpending(spending, result.rows); };
-    if (result.source === "pdf") {
-      section.append(renderPdfFiles(result.files, downloadStatus), downloadStatus);
-      if (result.rows.length) {
-        updateSpending();
-        section.append(spending);
-      }
-    }
-    const ready = element("div", "imports-ready");
-    const readyDetail = element("p", "", "");
-    readyDetail.setAttribute("aria-live", "polite");
-    const approve = action("Apply ready rows", () => commit(true), "primary");
-    ready.append(readyDetail, approve);
-    const toolbar = element("div", "imports-toolbar");
-    const selected = element("span", "muted");
-    selected.setAttribute("aria-live", "polite");
-    const submit = action("Apply selected rows", () => commit(), "primary");
-    const clear = action("Clear selection", () => {
-      for (const row of result.rows) row.selected = false;
-      renderPreview();
-    });
-    const grouped = Object.fromEntries(Object.keys(reviewGroups).map(key => [key, []]));
-    for (const row of result.rows) grouped[row.review_group].push(row);
-    if (!grouped[group].length) {
-      group = Object.keys(reviewGroups).find(key => grouped[key].length) ?? "ready";
-      page = 0;
-    }
-    const updateCount = () => {
-      const count = result.rows.filter(row => row.selected).length;
-      const summary = count + " selected";
-      if (selected.textContent !== summary) selected.textContent = summary;
-      submit.disabled = busy || !count;
-      clear.disabled = busy || !count;
-      const eligible = result.rows.filter(isBulkReady);
-      const linked = eligible.filter(row => row.action === "link").length;
-      const added = eligible.length - linked;
-      const available = countLabel(added, "new transaction") + " · " + countLabel(linked, "verified match", "verified matches");
-      if (readyDetail.textContent !== available) readyDetail.textContent = available;
-      ready.hidden = !eligible.length;
-      approve.disabled = busy || !eligible.length;
-      submit.className = (eligible.length ? "secondary" : "primary") + " imports-apply-selection";
-    };
-    if (result.rows.length) {
-      section.append(ready);
-      const navigation = element("div", "imports-groups");
-      navigation.setAttribute("role", "group");
-      navigation.setAttribute("aria-label", "Import review groups");
-      for (const [key, [name]] of Object.entries(reviewGroups)) {
-        const tab = action(name + " · " + grouped[key].length, () => {
-          group = key;
-          page = 0;
-          renderPreview();
-          resultBox.querySelector("[aria-pressed=true]")?.focus();
-        });
-        tab.setAttribute("aria-pressed", String(group === key));
-        tab.disabled = busy || !grouped[key].length;
-        navigation.append(tab);
-      }
-      section.append(navigation, element("p", "muted imports-explanation", reviewGroups[group][1]));
-      if (result.source === "pdf") {
-        const extractedRows = result.rows.filter(canSelectPdfRow);
-        if (extractedRows.length) {
-          const selectPdf = action("Select " + countLabel(extractedRows.length, "extracted PDF row"), () => {
-            for (const row of result.rows.filter(canSelectPdfRow)) row.selected = true;
-            renderPreview();
-            resultBox.querySelector(".imports-apply-selection")?.focus();
-          });
-          selectPdf.disabled = busy;
-          toolbar.append(selectPdf);
-        }
-      }
-      toolbar.append(clear, action("Download normalized CSV", () =>
-        download(normalizedCsv(result.rows), "normalized-payments.csv", "text/csv;charset=utf-8")));
-    }
-    if (result.source === "pdf" && result.rows.length) toolbar.append(action("Download normalized JSON", () =>
-      download(normalizedPdfJson(result), "statement-transactions.json", "application/json")));
-    if (result.rows.length) toolbar.append(selected, submit);
-    section.append(toolbar);
-    const rows = grouped[group];
+    const rows = result.rows;
     const pages = Math.ceil(rows.length / pageSize);
-    page = Math.max(0, Math.min(page, pages - 1));
-    for (const row of rows.slice(page * pageSize, (page + 1) * pageSize)) section.append(rowNode(row, updateCount, updateSpending));
-    if (pages > 1) {
-      const pagination = element("div", "pagination");
-      const previous = action("Previous", () => { page--; renderPreview(); });
-      const next = action("Next", () => { page++; renderPreview(); });
-      previous.disabled = page === 0 || busy;
-      next.disabled = page + 1 === pages || busy;
-      pagination.append(previous, element("span", "", "Page " + (page + 1) + " of " + pages), next);
-      section.append(pagination);
+    if (rows.length) {
+      section.append(element("p", "muted imports-explanation",
+        "Edit cells as needed, then import the table. To leave out a transaction, choose Skip row in its Action menu."));
+      const table = element("table", "imports-review-table");
+      table.setAttribute("aria-label", "Transactions to review");
+      const tableHeading = element("tr");
+      for (const name of ["Posting date", "Description", "Amount (€)", "Action", "Category or match", "Review"]) {
+        const cell = element("th", "", name);
+        cell.scope = "col";
+        tableHeading.append(cell);
+      }
+      const body = element("tbody");
+      table.append(element("thead", "", tableHeading), body);
+      const scroll = element("div", "table-scroll imports-review-scroll", table);
+      scroll.setAttribute("role", "region");
+      scroll.setAttribute("aria-label", "Editable import table");
+      scroll.tabIndex = 0;
+      const toolbar = element("div", "imports-review-toolbar");
+      const summary = element("p", "imports-review-count");
+      summary.setAttribute("role", "status");
+      const controls = element("div", "imports-review-controls");
+      const submit = action("", commit, "primary");
+      const confirmCurrency = action("", () => {
+        for (const row of rows.filter(included)) {
+          if (row.currency_unconfirmed) row.currency_confirmed = true;
+        }
+        updateDraft();
+        updateSpending();
+        (submit.disabled ? firstIssue : submit).focus();
+      });
+      const firstIssue = action("Go to first issue", () => {
+        const index = rows.findIndex(row => issues.has(row));
+        const targetPage = Math.floor(index / pageSize);
+        if (targetPage !== page) {
+          page = targetPage;
+          renderPreview();
+        }
+        resultBox.querySelector('[data-import-row="' + index + '"] .imports-review-issue')?.focus();
+      });
+      controls.append(confirmCurrency, firstIssue, submit);
+      toolbar.append(summary, controls);
+      const start = page * pageSize;
+      const visible = rows.slice(start, start + pageSize);
+      const entries = visible.map((row, i) => rowNode(row, start + i, updateDraft, updateSpending));
+      for (const entry of entries) body.append(entry.line, entry.details);
+      let issues;
+      function updateDraft() {
+        const pending = rows.filter(included);
+        issues = draftIssues(pending);
+        const unknown = pending.filter(row => row.currency_unconfirmed && !row.currency_confirmed).length;
+        const handled = rows.filter(row => row.existing != null).length;
+        const skipped = rows.length - pending.length - handled;
+        const count = [countLabel(pending.length, "transaction") + " to import",
+          issues.size && (issues.size === 1 ? "1 needs attention" : issues.size + " need attention"),
+          handled && handled + " already handled", skipped && skipped + " skipped"]
+          .filter(Boolean).join(" · ");
+        if (summary.textContent !== count) summary.textContent = count;
+        confirmCurrency.hidden = !unknown;
+        confirmCurrency.disabled = busy;
+        confirmCurrency.textContent = "Confirm EUR for " + countLabel(unknown, "row");
+        firstIssue.hidden = !issues.size;
+        firstIssue.disabled = busy;
+        submit.disabled = busy || issues.size > 0;
+        submit.textContent = busy ? "Importing…" : pending.length ? "Import " + countLabel(pending.length, "transaction") : "Finish review";
+        for (const [i, entry] of entries.entries()) entry.showIssue(issues.get(visible[i]));
+      }
+      updateDraft();
+      section.append(toolbar, scroll);
+      if (pages > 1) {
+        const pagination = element("div", "pagination");
+        const range = element("span", "", (start + 1) + "–" + (start + visible.length) + " of " + rows.length);
+        range.tabIndex = -1;
+        const changePage = delta => {
+          page += delta;
+          renderPreview();
+          resultBox.querySelector(".pagination span")?.focus();
+        };
+        const previous = action("Previous", () => changePage(-1));
+        const next = action("Next", () => changePage(1));
+        previous.disabled = page === 0 || busy;
+        next.disabled = page + 1 === pages || busy;
+        pagination.append(previous, range, next);
+        section.append(pagination);
+      }
+      const exports = element("div", "imports-toolbar");
+      exports.append(action("Download normalized CSV", () =>
+        download(normalizedCsv(rows), "normalized-payments.csv", "text/csv;charset=utf-8")));
+      if (result.source === "pdf") exports.append(action("Download normalized JSON", () =>
+        download(normalizedPdfJson(result), "statement-transactions.json", "application/json")));
+      section.append(exports);
+    } else {
+      section.append(element("p", "muted imports-explanation", "No transactions were found."));
     }
-    updateCount();
+    if (result.source === "pdf") {
+      const files = element("details", "imports-review-files");
+      const failed = result.files.filter(item => item.error).length;
+      const mismatches = result.files.filter(item => item.extraction?.totals_check === "mismatch").length;
+      const fileSummary = [countLabel(result.files.length, "source PDF"),
+        failed && failed + " failed to extract", mismatches && countLabel(mismatches, "totals mismatch", "totals mismatches")]
+        .filter(Boolean).join(" · ");
+      files.open = Boolean(failed || mismatches || !rows.length);
+      files.append(element("summary", "", fileSummary), renderPdfFiles(result.files, downloadStatus), downloadStatus);
+      section.append(files);
+      if (rows.length) {
+        const overview = element("details", "imports-review-files");
+        overview.append(element("summary", "", "PDF spending summary"), spending);
+        section.append(overview);
+        updateSpending();
+      }
+    }
     resultBox.replaceChildren(section);
+    resultBox.hidden = false;
   }
 
   source.addEventListener("change", () => {
@@ -1347,6 +1450,6 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
   syncSource(true);
   return {
     open,
-    pendingReview: () => result?.rows.filter(row => row.review_group !== "handled").length ?? 0,
+    pendingReview: () => result?.rows.filter(included).length ?? 0,
   };
 }

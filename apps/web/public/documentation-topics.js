@@ -241,12 +241,11 @@ export const topicGroups = [
             ],
           },
           {
-            title: "Review the inbox",
+            title: "Review and submit the table",
             steps: [
-              "Import statements for each account separately. Select Apply ready rows to record eligible transactions and link verified matches to manual entries in one batch. A verified match preserves the existing category, labels, notes, and documents.",
-              "In Proposed matches, compare the imported row and its suggested ledger transaction, transfer, commitment, or shared settlement side by side. Approve a match when both represent the same payment.",
-              "In Needs review, confirm ambiguous details and resolve duplicates or unsupported currencies. Apply the corrected rows you want to keep. You can inspect batches in import history after recording.",
-              "After comparing a PDF with the preview, use Select extracted PDF rows to select rows with clear parsed values and no likely match, then choose Apply selected rows.",
+              "Import statements for each account separately. Edit posting dates, descriptions, signed amounts, and categories in the table. Verified matches preserve the existing transaction’s category, labels, notes, and documents.",
+              "Use Details to compare a row with its source or a proposed match. Choose how to handle ambiguous matches and use Skip row to leave out a transaction.",
+              "Select Import transactions to submit the table. Quant clears the preview and confirms how many transactions were imported. Open Recent imports to see what was recorded.",
             ],
           },
           {
@@ -303,7 +302,7 @@ export const topicGroups = [
             steps: [
               "Create an API key in your Groq Console. In Import payments, choose PDF statement and AI with Groq. Paste a key and use Save key, or let Quant save it after a successful AI extraction.",
               "Select the account, upload the PDF, and optionally give the import a name. Confirm for this file that Quant can send the extracted text to Groq. The original PDF stays on the Quant server.",
-              "Review the extracted dates, descriptions, signed amounts, and currency. Approve only the rows or proposed matches you have checked.",
+              "Review the extracted dates, descriptions, signed amounts, and currency in the table. Choose Skip row for any transaction you want to leave out, then submit the table.",
             ],
           },
           {

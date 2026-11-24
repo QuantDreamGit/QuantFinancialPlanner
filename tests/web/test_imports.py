@@ -195,6 +195,29 @@ class ImportsTests(unittest.TestCase):
             self.commit(*(self.decide(row) for row in rows), ready_only=True)
         self.assertEqual([entry["name"] for entry in self.db.ledger().entries], ["Sports"])
 
+    def test_table_commit_accepts_edits_and_revalidates_unchanged_rows_atomically(self):
+        original = {"kind": "expense", "name": "City Market", "amount": "20",
+                    "account_id": self.checking, "posted_on": "2026-11-18"}
+        entry = self.db.save_entry(original, TODAY)
+        rows = self.preview(self.input(
+            "Date,Description,Amount\n2026-11-17,Fuel,-12\n2026-11-18,City Market,-20\n"
+        ))["rows"]
+        self.assertEqual(rows[1]["auto_match"], entry)
+        edited = self.decide(rows[0], name="Fuel receipt", amount="-13.50")
+        verified = self.decide(rows[1], "link", entry_id=entry, verify_ready=True)
+        self.db.save_entry(dict(original, name="Different shop"), TODAY, entry)
+        with self.assertRaisesRegex(ApiError, "no longer ready"):
+            self.commit(edited, verified)
+        self.assertEqual(len(self.db.ledger().entries), 1)
+        self.assertEqual(self.api("/setup")["history"], [])
+
+        self.db.save_entry(original, TODAY, entry)
+        result = self.commit(edited, verified)
+        self.assertEqual([row["action"] for row in result["rows"]], ["create", "link"])
+        self.assertEqual(len(self.api("/setup")["history"]), 1)
+        self.assertEqual(self.commit(edited, verified)["already"], 2)
+        self.assertCountEqual([row["name"] for row in self.db.ledger().entries], ["City Market", "Fuel receipt"])
+
     def test_ready_import_links_manual_expense_with_its_invoice_and_adds_fresh_row(self):
         category = self.db.save_category({"kind": "expense", "name": "Internet", "color": "mint"})
         transaction = self.db.save_entry({

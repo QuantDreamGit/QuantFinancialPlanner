@@ -977,13 +977,15 @@ def _commit(database, data, today):
         raise ApiError("Review the file in this workspace before importing its rows.", "account_id", 409)
     batch_name = _batch_name(data, source, today)
     ready_only = data.get("ready_only") is True
+    verify_ready = [ready_only or row.get("verify_ready") is True for row in selected]
+    has_verified_rows = any(verify_ready)
     saved, already = 0, 0
     results = []
     with database.connection(write=True) as conn:
         batch_id = None
         # A row may match a transfer or settlement posted earlier in this batch.
         ledger = lambda: database.ledger(conn)
-        if ready_only:
+        if has_verified_rows:
             bulk_account = _set_account(conn, account_id)
             bulk_index = _statement_index(ledger(), account_id, source)
             bulk_plans = list(_expected_status(conn))
@@ -997,7 +999,7 @@ def _commit(database, data, today):
                 posted = date.fromisoformat(recorded_date(row.get("posted_on"), "posted_on", today))
                 cents = money(row.get("amount"), "amount")
                 batch_dates[cents, posted.toordinal()].add(scope[2])
-        for row, scope in zip(selected, scopes):
+        for row, scope, verify in zip(selected, scopes, verify_ready):
             (_, _, fingerprint, reference, blocked, stamp, currency_unconfirmed, _,
              document_id, page, evidence, description) = scope
             previous = conn.execute("""
@@ -1007,7 +1009,7 @@ def _commit(database, data, today):
                 results.append(dict(previous, existing=True))
                 already += 1
                 continue
-            if ready_only:
+            if verify:
                 posted = date.fromisoformat(recorded_date(row.get("posted_on"), "posted_on", today))
                 cents = money(row.get("amount"), "amount")
                 action = row.get("action")
@@ -1033,13 +1035,14 @@ def _commit(database, data, today):
                     (source, account_id, batch_name),
                 ).lastrowid
             try:
-                if ready_only and row["action"] == "link":
+                if verify and row["action"] == "link":
                     entry_id, action = row["entry_id"], "link"
-                    bulk_claimed.add(entry_id)
                 else:
                     entry_id, action = _make_entry(database, conn, today, row, ledger, scope)
             except ApiError as error:
                 raise ApiError("Row " + str(row.get("line", saved + already + 1))[:12] + " · " + str(error), error.field, error.status) from error
+            if has_verified_rows and action == "link":
+                bulk_claimed.add(entry_id)
             conn.execute("""
                 INSERT INTO import_records(account_id, fingerprint, source, batch_id, entry_id, action) VALUES (?, ?, ?, ?, ?, ?)
             """, (account_id, fingerprint, source, batch_id, entry_id, action))
