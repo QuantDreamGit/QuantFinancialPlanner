@@ -27,6 +27,7 @@ const dateChoices = [
 ];
 const pageSize = 25;
 const commitSize = 4000;
+const categoryBatchSize = 120;
 const smallExpenseLimit = 25000n;
 const otherMovementKinds = new Set(["transfer", "investment", "valuation", "settlement"]);
 const otherMovementActions = new Set(["transfer", "settle", "expected"]);
@@ -372,6 +373,10 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
   const consentCopy = element("span");
   consentLabel.append(consent, consentCopy);
   const consentDetails = element("p", "muted", "Statements may contain financial and identifying details.");
+  const autoCategories = element("input");
+  autoCategories.type = "checkbox";
+  const autoCategoryLabel = element("label", "imports-check");
+  autoCategoryLabel.append(autoCategories, "Suggest categories with OpenAI using this statement and relevant past descriptions.");
   const apiKey = textInput("", "API key", "password");
   apiKey.autocomplete = "off";
   apiKey.autocapitalize = "off";
@@ -395,7 +400,7 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
   keyControls.append(keyChange, keyRemove);
   keyState.append(keyStatus, keyControls);
   keyPanel.append(keyLabel, keySave, keyCancel, keyLink, keyHint);
-  aiPanel.append(modelLabel, keyState, keyPanel, consentLabel, consentDetails);
+  aiPanel.append(modelLabel, keyState, keyPanel, consentLabel, autoCategoryLabel, consentDetails);
   const ocr = element("input");
   ocr.type = "checkbox";
   const ocrLabel = element("label", "imports-check");
@@ -435,7 +440,8 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
   let categoryRequest = 0, appliedCategoryRequest = 0;
   let categoryMap = new Map();
   let updateDraftCategories;
-  const controls = [source, account, file, importName, pdfMethod, csvMethod, openaiModel, consent, apiKey, delimiters, dates, amountMode, ocr];
+  const controls = [source, account, file, importName, pdfMethod, csvMethod, openaiModel, consent, autoCategories,
+    apiKey, delimiters, dates, amountMode, ocr];
   const promptPanel = element("details", "imports-prompt");
   promptPanel.append(element("summary", "", "Edit table with a prompt"));
   const promptForm = element("div", "imports-prompt-form");
@@ -453,13 +459,15 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
   promptStatus.setAttribute("role", "status");
   promptStatus.tabIndex = -1;
   const promptApply = action("Send to OpenAI and edit draft", editWithPrompt, "secondary");
+  const categorySuggest = action("Suggest categories with OpenAI", suggestWithOpenAI);
   const undoEdit = action("Undo last prompt edit", undoPrompt, "text-button");
   const promptActions = element("div", "imports-review-controls");
-  promptActions.append(promptApply, undoEdit);
+  promptActions.append(promptApply, categorySuggest, undoEdit);
   const promptSettings = element("div", "imports-prompt-settings");
   promptSettings.append(label("Model for table edits", promptModel), promptKeyLabel);
   promptForm.append(label("Describe your edits", prompt), promptSettings,
     element("p", "muted", "This sends your prompt, editable rows and their source details, and available category and match options to OpenAI."),
+    element("p", "muted", "Category suggestions send uncategorized descriptions, category names, and relevant past descriptions to OpenAI."),
     promptActions, promptStatus);
   promptPanel.append(promptForm);
   prompt.addEventListener("input", updatePromptControls);
@@ -598,6 +606,7 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     csvMethodLabel.hidden = !isCsv;
     aiPanel.hidden = !provider;
     modelLabel.hidden = provider?.settings !== "openai";
+    autoCategoryLabel.hidden = modelLabel.hidden;
     if (provider) {
       consentCopy.textContent = provider.consent;
       const name = provider.name + " API key";
@@ -942,7 +951,7 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
       expected_id: payment ? String(payment.id) : "",
       commitment: commitment ? commitment.id + "|" + commitment.date : "",
       other_account_id: "", person_id: "",
-      category_id: row.suggested_category_id != null ? String(row.suggested_category_id) : "default",
+      category_id: row.suggested_category_id != null ? String(row.suggested_category_id) : "",
     };
   }
 
@@ -978,6 +987,16 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
         const response = await api(endpoint + "preview", { method: "POST", data: { ...await fileData(), ...input } });
         if (provider && response.ai) setup[provider.settings] = response.ai;
         result = { ...response, name: response.name || name, rows: response.rows.map(row => normalize(row)) };
+      }
+      if (provider?.settings === "openai" && autoCategories.checked && result.rows.some(canSuggestCategory)) {
+        try {
+          const { notices } = await applyCategorySuggestions(openaiModel.value, key, message => setStatus(message, "progress"));
+          result.notices.push(...notices);
+          setStatus();
+        } catch (error) {
+          result.notices.push("Category suggestions could not finish. " + apiMessage(error));
+          setStatus();
+        }
       }
       editingKey = false;
       page = 0;
@@ -1078,7 +1097,11 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
       if (key === "category_id") setCategoryOptions(control, row);
       else options(control, pairs, row[key], "Choose " + heading.toLowerCase());
       control.setAttribute("aria-label", heading + " for " + rowLabel);
-      control.addEventListener("change", () => { row[key] = control.value; updateRow(); });
+      control.addEventListener("change", () => {
+        row[key] = control.value;
+        if (key === "category_id") row.category_edited = true;
+        updateRow();
+      });
       container.append(control);
     }
     const key = targetFields[row.action];
@@ -1198,8 +1221,10 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     for (const control of [prompt, promptKey, promptModel]) control.disabled = busy;
     promptApply.disabled = busy || !prompt.value.trim() || (needsKey && !promptKey.value.trim());
     promptApply.textContent = busy ? "Working…" : "Send to OpenAI and edit draft";
+    categorySuggest.disabled = busy || !result?.rows.some(canSuggestCategory) || (needsKey && !promptKey.value.trim());
     undoEdit.hidden = !promptUndo;
     undoEdit.disabled = busy;
+    undoEdit.textContent = promptUndo?.categories ? "Undo category suggestions" : "Undo last prompt edit";
   }
 
   function resetPrompt() {
@@ -1256,8 +1281,9 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
       const kind = parsedCents(amount ?? row.value) < 0n ? "expense" : "income";
       const valid = setup.categories.some(item => String(item.id) === category && item.kind === kind);
       if (!valid && changes.category_id !== undefined) invalid("The proposed category is unavailable for this transaction.");
-      if (!valid && amount !== undefined) changes.category_id = "default";
+      if (!valid && amount !== undefined) changes.category_id = "";
     }
+    if (edits.category_id !== undefined) changes.category_edited = true;
     const action = changes.action ?? row.action;
     if (!rowActions(row).some(([value]) => value === action)) invalid("The proposed action is unavailable.");
     if (target !== undefined) {
@@ -1280,6 +1306,67 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
       const compared = typeof a === "bigint" ? Number(a > b) - Number(a < b) : a.localeCompare(b);
       return direction === "desc" ? -compared : compared;
     });
+  }
+
+  function needsCategory(row) {
+    return row.action === "create" && included(row) && !row.category_id && !row.category_edited;
+  }
+
+  function canSuggestCategory(row) {
+    if (!needsCategory(row) || !row.name.trim()) return false;
+    const cents = parsedCents(row.value);
+    return cents && cents > -(2n ** 63n) && cents < 2n ** 63n;
+  }
+
+  async function applyCategorySuggestions(model, key, progress) {
+    const rows = result.rows.filter(canSuggestCategory);
+    const notices = [];
+    const suggestions = [];
+    for (let start = 0; start < rows.length; start += categoryBatchSize) {
+      const batch = rows.slice(start, start + categoryBatchSize);
+      progress("Suggesting categories for rows " + (start + 1) + "–" + (start + batch.length) + " of " + rows.length + "…");
+      const response = await api(endpoint + "review-categories", { method: "POST", data: {
+        ai_consent: true, account_id: account.value, openai_model: model, ...(key ? { api_key: key } : {}),
+        rows: batch.map((row, index) => ({ id: index + 1, name: row.name, amount: row.value })),
+      } });
+      if (response.ai) setup.openai = response.ai;
+      notices.push(...response.notices);
+      for (const { id, category_id } of response.suggestions) {
+        const row = batch[id - 1];
+        if (row && categoryMap.get(category_id)?.kind === (parsedCents(row.value) < 0n ? "expense" : "income")) {
+          suggestions.push([row, category_id]);
+        }
+      }
+    }
+    const changes = new Map();
+    for (const [row, categoryId] of suggestions) {
+      changes.set(row, { category_id: row.category_id });
+      row.category_id = String(categoryId);
+    }
+    return { changes, notices };
+  }
+
+  async function suggestWithOpenAI() {
+    if (categorySuggest.disabled || !result) return;
+    const key = setup.openai?.configured ? "" : promptKey.value.trim();
+    setBusy(true);
+    renderPreview();
+    try {
+      const { changes, notices } = await applyCategorySuggestions(promptModel.value, key, message => { promptStatus.textContent = message; });
+      if (changes.size) {
+        promptUndo = { changes, order: result.reviewRows, reordered: false, preserved: 0, categories: true };
+      }
+      const summary = changes.size ? countLabel(changes.size, "category", "categories") + " suggested."
+        : "No confident category suggestions.";
+      promptStatus.textContent = [summary, ...notices].join(" ");
+      if (setup.openai?.configured) promptKey.value = "";
+    } catch (error) {
+      promptStatus.textContent = apiMessage(error);
+    } finally {
+      setBusy(false);
+      renderPreview();
+      promptStatus.focus({ preventScroll: true });
+    }
   }
 
   async function editWithPrompt() {
@@ -1350,7 +1437,7 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     if (busy || !result || !promptUndo) return;
     for (const [row, changes] of promptUndo.changes) Object.assign(row, changes);
     result.reviewRows = promptUndo.order;
-    promptStatus.textContent = "Undid the last prompt edit."
+    promptStatus.textContent = (promptUndo.categories ? "Undid the category suggestions." : "Undid the last prompt edit.")
       + (promptUndo.preserved ? " Rows you edited afterward kept their changes." : "");
     promptUndo = undefined;
     renderPreview();
@@ -1433,7 +1520,8 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     amount.addEventListener("change", () => {
       const category = setup.categories.find(item => String(item.id) === row.category_id);
       if (category && category.kind !== (parsedCents(row.value) < 0n ? "expense" : "income")) {
-        row.category_id = "default";
+        row.category_id = "";
+        row.category_edited = false;
       }
       if (row.action === "create") {
         updateAction();
@@ -1459,9 +1547,13 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
       line.classList.toggle("imports-review-excluded", !included(row));
       issueNode.classList.toggle("imports-review-invalid", Boolean(issue));
       const hasWarning = warnings.length || row.overlap || row.matchOverlap;
+      const categoryCheck = needsCategory(row) && !issue && !hasWarning;
+      issueNode.classList.toggle("imports-category-uncertain", categoryCheck);
       issueNode.textContent = issue || (row.blocked ? row.currency + " unsupported"
         : row.existing != null ? row.appliedLabel || ""
-          : row.action === "skip" ? "Skipped" : hasWarning ? "Check source" : isBulkReady(row) && row.action === "link" ? "Verified match" : "");
+          : row.action === "skip" ? "Skipped" : hasWarning ? "Check source"
+            : categoryCheck ? row.category_conflict ? "Conflicting category history" : "Category uncertain"
+              : isBulkReady(row) && row.action === "link" ? "Verified match" : "");
     } };
   }
 
@@ -1616,7 +1708,7 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     const pages = Math.ceil(rows.length / pageSize);
     if (rows.length) {
       section.append(element("p", "muted imports-explanation",
-        "Edit cells as needed, then import the table. To leave out a transaction, choose Skip row in its Action menu."));
+        "Category suggestions use past transactions. Review uncertain categories and edit cells as needed. Use Skip row to leave out a transaction."));
       if (rows.some(editable)) {
         updatePromptControls();
         section.append(promptPanel);
@@ -1676,8 +1768,10 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
         const unknown = pending.filter(row => row.currency_unconfirmed && !row.currency_confirmed).length;
         const handled = rows.filter(row => row.existing != null).length;
         const skipped = rows.length - pending.length - handled;
+        const categories = pending.filter(needsCategory).length;
         const count = [countLabel(pending.length, "transaction") + " to import",
           issues.size && (issues.size === 1 ? "1 needs attention" : issues.size + " need attention"),
+          categories && countLabel(categories, "uncertain category", "uncertain categories"),
           handled && handled + " already handled", skipped && skipped + " skipped"]
           .filter(Boolean).join(" · ");
         if (summary.textContent !== count) summary.textContent = count;
@@ -1689,6 +1783,7 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
         submit.disabled = busy || issues.size > 0;
         submit.textContent = busy ? "Importing…" : pending.length ? "Import " + countLabel(pending.length, "transaction") : "Finish review";
         for (const [i, entry] of entries.entries()) entry.showIssue(issues.get(visible[i]));
+        updatePromptControls();
       }
       updateDraft();
       updateDraftCategories = () => {

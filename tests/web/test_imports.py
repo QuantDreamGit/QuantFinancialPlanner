@@ -227,6 +227,55 @@ class ImportsTests(unittest.TestCase):
         self.assertEqual(self.db.ledger().entries, [])
         self.assertEqual(self.api("/setup")["history"], [])
 
+    def test_category_suggestions_match_merchant_variants_and_flag_disagreement(self):
+        groceries = self.db.save_category({"kind": "expense", "name": "Groceries", "color": "mint"})
+        transport = self.db.save_category({"kind": "expense", "name": "Travel & transport", "color": "sky"})
+        for name, category, account in (
+            ("DEKAMARKT LOC 686 ZAANDAM NLD", groceries, self.savings),
+            ("Uber", transport, self.checking), ("Uber", groceries, self.checking),
+            ("SUMUP", groceries, self.checking),
+        ):
+            self.db.save_entry({"kind": "expense", "account_id": account, "name": name,
+                                "posted_on": "2026-11-01", "amount": "9", "category_id": category}, TODAY)
+        rows = self.preview(self.input("Date,Description,Amount\n"
+            "2026-11-15,DEKAMARKT LOC 950 AMSTERDAM NLD,-15\n2026-11-15,Uber,-8\n"
+            "2026-11-15,Uber Eats,-10\n2026-11-15,SUMUP,-11\n"))["rows"]
+        self.assertEqual([row["suggested_category_id"] for row in rows], [groceries, None, None, None])
+        self.assertEqual([row["category_conflict"] for row in rows], [False, True, False, False])
+        self.commit(self.decide(rows[0], category_id=str(groceries)), self.decide(rows[1], category_id=""))
+        self.assertIsNone(self.db.ledger().entries[-1]["category_id"])
+
+    def test_openai_categories_use_only_relevant_history_and_accept_compatible_choices(self):
+        transport = self.db.save_category({"kind": "expense", "name": "Travel", "color": "sky"})
+        food = self.db.save_category({"kind": "expense", "name": "Dining", "color": "mint"})
+        income = self.db.save_category({"kind": "income", "name": "Salary", "color": "rose"})
+        for name, category in (("Uber ride", transport), ("Uber Eats", food), ("Unrelated", transport),
+                               ("Conflicting merchant", food), ("Conflicting merchant", transport)):
+            self.db.save_entry({"kind": "expense", "account_id": self.checking, "name": name,
+                                "posted_on": "2026-11-01", "amount": "3.25", "category_id": category}, TODAY)
+        data = {"account_id": self.checking, "api_key": "sk-synthetic-category-test-key", "openai_model": "gpt-5.4-mini",
+                "rows": [{"id": 1, "name": "Uber Amsterdam", "amount": "-42", "token": "private"},
+                         {"id": 2, "name": "Ambiguous", "amount": "-21"},
+                         {"id": 3, "name": "Uber ride", "amount": "-42"},
+                         {"id": 4, "name": "Conflicting merchant", "amount": "-12"}]}
+        edits = {"updates": [{"rows": [1], "category_id": str(transport)}, {"rows": [2], "category_id": str(income)},
+                             {"rows": [4], "category_id": str(food)}, {"rows": None, "category_id": str(food)}]}
+        with patch("apps.web.imports.suggest_review_edits", return_value=edits) as suggest:
+            with self.assertRaisesRegex(ApiError, "Confirm that Quant may send"):
+                self.api("/review-categories", data)
+            suggest.assert_not_called()
+            result = self.api("/review-categories", dict(data, ai_consent=True))
+        context = suggest.call_args.args[1]
+        self.assertEqual([row["id"] for row in context["rows"]], [1, 2])
+        self.assertEqual(set(context["rows"][0]), {"id", "name", "kind", "examples"})
+        self.assertCountEqual(context["rows"][0]["examples"], [
+            {"name": "Uber ride", "category_id": transport}, {"name": "Uber Eats", "category_id": food},
+        ])
+        self.assertEqual(context["rows"][1]["examples"], [])
+        self.assertEqual(result["suggestions"], [{"id": 3, "category_id": transport}, {"id": 1, "category_id": transport}])
+        self.assertEqual(len(self.db.ledger().entries), 5)
+        self.assertEqual(self.api("/setup")["history"], [])
+
     def test_import_defaults_create_and_reuse_categories_and_allow_overrides(self):
         groceries = self.db.save_category({"kind": "expense", "name": "Groceries", "color": "mint"})
         other_income = self.db.save_category({"kind": "income", "name": "Other income", "color": "sky"})

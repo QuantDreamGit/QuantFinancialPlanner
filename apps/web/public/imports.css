@@ -46,6 +46,7 @@
 .imports-review-issue { display: block; color: var(--muted); }
 .imports-review-issue:empty { display: none; }
 .imports-review-invalid { color: var(--negative); }
+.imports-category-uncertain { color: #86580f; }
 .imports-review-files { margin-top: 10px; }
 .imports-review-files > summary { font-weight: 630; }
 .imports-check { display: flex; align-items: center; gap: 7px; }

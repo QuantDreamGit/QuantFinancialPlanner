@@ -39,6 +39,7 @@ MAX_RAW_ROWS = 20_000
 MAX_ROWS = 4_000
 MAX_COMMIT = 24 * 1024 * 1024
 MAX_REVIEW_PROMPT = 2 * 1024 * 1024
+MAX_CATEGORY_ROWS = 120
 MAX_ARCHIVE_FILES = 2_000
 DAY = timedelta(days=1)
 TOKEN_KEY = secrets.token_bytes(32)
@@ -801,17 +802,112 @@ def _openai_totals(extraction, rows):
     }
 
 
-def _remembered_categories(ledger, account_id):
-    defaults = {category["id"] for category in ledger.categories if category["parent_id"] is None
-                and category["name"].casefold() == DEFAULT_IMPORT_CATEGORIES.get(category["kind"], "").casefold()}
-    remembered = defaultdict(set)
-    for entry in ledger.entries:
-        if (entry["account_id"] == account_id and entry["kind"] in ("expense", "income")
-                and entry["category_id"] is not None and entry["category_id"] not in defaults and not entry.get("shared")):
-            name = _normalized_header(entry["name"])
-            if name:
-                remembered[entry["kind"], name].add(entry["category_id"])
-    return {key: next(iter(ids)) for key, ids in remembered.items() if len(ids) == 1}
+def _merchant_key(value):
+    name = unicodedata.normalize("NFKC", value).casefold()
+    name = re.split(r"\b(?:loc|location|store|filiaal)\s+\d+\b", name, maxsplit=1)[0]
+    words = re.findall(r"[^\W_]+", name)
+    ignored = GENERIC_PAYMENT_WORDS | {"sumup", "ccv", "nld", "ita"}
+    return " ".join(word for word in words if word not in ignored and not any(char.isdigit() for char in word))
+
+
+class _CategoryHistory:
+    def __init__(self, ledger, account_id):
+        self.account_id = account_id
+        self.categories = {
+            item["id"]: {key: item[key] for key in ("id", "name", "kind", "parent_id")}
+            for item in ledger.categories
+            if item["id"] > 0 and item["kind"] in DEFAULT_IMPORT_CATEGORIES
+            and not (item["parent_id"] is None
+                     and item["name"].casefold() == DEFAULT_IMPORT_CATEGORIES[item["kind"]].casefold())
+        }
+        self.exact = defaultdict(list)
+        self.merchants = defaultdict(list)
+        self.related = defaultdict(list)
+        for entry in reversed(ledger.entries):
+            if entry["id"] <= 0 or entry["category_id"] not in self.categories:
+                continue
+            kind, name = entry["kind"], entry["name"]
+            record = (entry["account_id"], entry["category_id"], name)
+            self.exact[kind, _normalized_header(name)].append(record)
+            merchant = _merchant_key(name)
+            if merchant:
+                self.merchants[kind, merchant].append(record)
+                self.related[kind, merchant.split()[0]].append(record)
+
+    def suggest(self, kind, name):
+        merchant = _merchant_key(name)
+        if not merchant:
+            return None, False
+        matches = self.exact.get((kind, _normalized_header(name))) or self.merchants.get((kind, merchant), ())
+        local = [category for account, category, _ in matches if account == self.account_id]
+        choices = set(local) if local else {category for _, category, _ in matches}
+        return (next(iter(choices)), False) if len(choices) == 1 else (None, len(choices) > 1)
+
+    def examples(self, kind, name):
+        merchant = _merchant_key(name)
+        if not merchant:
+            return []
+        examples = {}
+        for _, category, description in self.related.get((kind, merchant.split()[0]), ()):
+            examples.setdefault((description, category), {"name": description, "category_id": category})
+            if len(examples) == 6:
+                break
+        return list(examples.values())
+
+
+def _review_categories(database, data, key_store, user_id):
+    if data.get("ai_consent") is not True:
+        raise ApiError("Confirm that Quant may send descriptions and category examples to OpenAI.", "ai_consent")
+    model = validate_openai_model(data.get("openai_model", OPENAI_DEFAULT_MODEL))
+    account_id = identifier(data.get("account_id"), "account_id")
+    supplied = data.get("rows")
+    if not isinstance(supplied, list) or not 1 <= len(supplied) <= MAX_CATEGORY_ROWS:
+        raise ApiError("Choose between 1 and 120 rows for category suggestions.", "rows")
+    with database.connection(snapshot=True) as conn:
+        _set_account(conn, account_id)
+        history = _CategoryHistory(database.ledger(conn), account_id)
+    suggestions, pending, ids = [], {}, set()
+    for row in supplied:
+        if not isinstance(row, dict) or type(row.get("id")) is not int or row["id"] < 1 or row["id"] in ids:
+            raise ApiError("Choose distinct draft rows for category suggestions.", "rows")
+        ident = row["id"]
+        ids.add(ident)
+        name = line(row.get("name"), "name", 100)
+        cents = money(row.get("amount"), "amount")
+        if not cents:
+            raise ApiError("Enter a nonzero amount before suggesting a category.", "amount")
+        kind = "expense" if cents < 0 else "income"
+        category, conflict = history.suggest(kind, name)
+        if category is not None:
+            suggestions.append({"id": ident, "category_id": category})
+        elif not conflict:
+            pending[ident] = {"id": ident, "name": name, "kind": kind, "examples": history.examples(kind, name)}
+    response = {"suggestions": suggestions, "notices": []}
+    if pending and history.categories:
+        api_key, remember_key = _ai_key(data, key_store, user_id, validate_openai_key)
+        instruction = ("Suggest only category_id edits. Prefer consistent past examples for the same merchant. "
+                       "Without relevant history, assign a category only if the description clearly identifies the activity "
+                       "and exactly one supplied category fits its kind. Leave any ambiguous merchant, payment processor, "
+                       "or conflicting history unchanged. List the specific row IDs for each suggestion. Do not change other fields.")
+        context = {"rows": list(pending.values()), "categories": list(history.categories.values())}
+        edited = suggest_review_edits(instruction, context, api_key=api_key, model=model)
+        proposed = {}
+        for update in edited["updates"]:
+            if set(update) != {"rows", "category_id"} or update["rows"] is None:
+                continue
+            value = update["category_id"]
+            category = history.categories.get(int(value)) if re.fullmatch(r"[0-9]{1,18}", value) else None
+            if category:
+                for ident in update["rows"]:
+                    if ident in pending and pending[ident]["kind"] == category["kind"]:
+                        proposed.setdefault(ident, set()).add(category["id"])
+        suggestions.extend({"id": ident, "category_id": next(iter(categories))}
+                           for ident, categories in proposed.items() if len(categories) == 1)
+        if remember_key:
+            _remember_ai_key(key_store, user_id, api_key, "OpenAI", response["notices"])
+    if key_store:
+        response["ai"] = _ai_configuration(key_store, user_id, "OpenAI")
+    return response
 
 
 def _preview(database, data, today, *, key_store=None, user_id=None):
@@ -852,7 +948,7 @@ def _preview(database, data, today, *, key_store=None, user_id=None):
     with database.connection(snapshot=True) as conn:
         account = _set_account(conn, account_id)
         ledger = database.ledger(conn)
-        remembered_categories = _remembered_categories(ledger, account_id)
+        category_history = _CategoryHistory(ledger, account_id)
         by_amount = _statement_index(ledger, account_id, source)
         handled = {row["fingerprint"]: row["entry_id"] for row in conn.execute(
             "SELECT fingerprint, entry_id FROM import_records WHERE account_id = ?", (account_id,)
@@ -953,6 +1049,7 @@ def _preview(database, data, today, *, key_store=None, user_id=None):
                         if candidate not in bank_claimed:
                             automatic = candidate
 
+            category, category_conflict = category_history.suggest("expense" if cents < 0 else "income", description) if cents and description else (None, False)
             pending.append(({
                 "line": index, "name": name, "posted_on": posted.isoformat() if posted else "",
                 "amount": None if cents is None else str(cents), "reference": reference,
@@ -960,9 +1057,7 @@ def _preview(database, data, today, *, key_store=None, user_id=None):
                 "currency_unconfirmed": currency_unconfirmed,
                 "errors": errors, "blocked": blocked, "existing": saved, "matches": match_rows,
                 "commitments": rule_matches, "expected": repayment_matches,
-                "suggested_category_id": remembered_categories.get(
-                    ("expense" if cents is not None and cents < 0 else "income", _normalized_header(description))
-                ),
+                "suggested_category_id": category, "category_conflict": category_conflict,
                 "page": evidence.get("page"), "evidence": _clean(evidence.get("evidence"), 160),
                 "statement_description": statement_description if openai else "",
                 **({"csv_source": " · ".join(f"{header}: {_clean(cell, 100)}" for header, cell in zip(headers, row)
@@ -1358,6 +1453,8 @@ def handle_imports(handler, path, query, method, today):
     if batch and method == "GET":
         return _batch(database, int(batch[1]), query), 200
     if method == "POST":
+        if resource == "review-categories":
+            return _review_categories(database, handler.read_data(128 * 1024), openai_store, user_id), 200
         if resource == "review-prompt":
             return _review_prompt(database, handler.read_data(MAX_REVIEW_PROMPT), today, openai_store, user_id), 200
         if resource == "inspect":
