@@ -43,6 +43,15 @@ Under **Manage → Workspaces**, open **Sample workspace** or **Sample Family**.
 - **Import payments** accepts bank and card CSVs, PDF statements, and Amazon order exports. Review and edit the transactions in the table, then submit them together. Use **Skip row** to leave out a transaction. You can reconcile a row to an existing charge, transfer, scheduled commitment, or shared settlement. Local PDF extraction uses Poppler or macOS PDFKit. On macOS, **Read scanned pages with local OCR** uses Vision for scans.
 - Leave **This transaction will appear on a statement** checked for bank expenses you record manually. Verified matches are included with the import, and the table prompts you to resolve ambiguous matches. Import each bank account’s files into the corresponding ledger account. Find archived PDFs under **Original PDF statements → Download original PDF**.
 
+## Import CSV statements with OpenAI
+
+1. In **Import payments**, choose **Bank or card CSV**, select the ledger account, and set **CSV import method** to **AI with OpenAI**. Choose an **OpenAI model**. The CSV and PDF import methods share your saved OpenAI key.
+2. Select the statement and confirm that Quant can send the headers and up to eight sample rows. Choose **Map and review with OpenAI**. Quant uses the suggested layout to read the complete CSV locally and show each transaction in the editable table.
+3. Check the dates, descriptions, and amounts. To adjust the proposed columns or date and amount conventions, choose **Import settings → Manual column mapping**. Quant carries over the suggested layout.
+4. Review the categories and submit the table. Quant reuses category choices for matching descriptions where it can. New transactions otherwise default to **Other expenses** or **Other income**, and you can change the category in the table.
+
+In any import review, open **Edit table with a prompt** to describe an edit. For example, enter “Use 15-11-2026 for missing dates,” “Rename POS Market to Market,” or “Put supermarket payments in Groceries.” Quant sends your prompt, editable rows from all pages, and available category and match options to OpenAI. The changes apply to the draft, where you can review or undo them before importing.
+
 ## Track vehicle costs
 
 - **Cars → Add car** lets you choose the drivetrain, select optional components, and assign the car to one or more people or groups. A shared car has one history across its assigned workspaces.
@@ -53,7 +62,7 @@ Under **Manage → Workspaces**, open **Sample workspace** or **Sample Family**.
 
 ## Import PDFs with OpenAI
 
-1. Open **Activity → Import payments**, choose **PDF statements**, then choose **AI with OpenAI**. Paste an [OpenAI API key](https://platform.openai.com/api-keys) and select **Save key**. Quant can also save the key after the first successful extraction. Use **Change key** or **Remove key** to manage it. Saved keys belong to your sign-in. Quant can use the server’s `OPENAI_API_KEY` if you have no personal key.
+1. Open **Activity → Import payments**, choose **PDF statements**, then choose **AI with OpenAI** and select a model. Paste an [OpenAI API key](https://platform.openai.com/api-keys) and select **Save key**. Quant can also save the key after the first successful extraction. Use **Change key** or **Remove key** to manage it. Saved keys belong to your sign-in. Quant can use the server’s `OPENAI_API_KEY` if you have no personal key.
 2. Pick the ledger account and select its statement or receipt PDFs together. Confirm that Quant may send each complete PDF to OpenAI. OpenAI reads scanned pages directly. Quant saves the originals in its own archive so you can retrieve them after extraction, including when an OpenAI request fails. [OpenAI PDF inputs](https://developers.openai.com/api/docs/guides/file-inputs)
 3. Review the combined summary. Expenses over €250 appear individually with their original descriptions. Expenses of €250 or less are totaled by month. Credits appear separately. Quant keeps each transaction and its posting date in the ledger and learns category suggestions from previously categorized transactions with the same description and account.
 4. Edit the transactions in the table and check any incomplete totals, possible duplicates, and open issues against the PDF. Select **Import transactions** to submit the table. After the confirmation appears, find the batch under **Recent imports**. Use **Download normalized JSON** before submitting if you want structured details including available page and evidence references.

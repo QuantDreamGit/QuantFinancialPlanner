@@ -235,7 +235,7 @@ export const topicGroups = [
           {
             title: "Choose a file type",
             bullets: [
-              "For a bank or card CSV, select the ledger account, then map the date and description and either the signed amount or separate debit and credit columns. Check the source’s date and sign conventions. Map the transaction reference when available.",
+              "For a bank or card CSV, select the ledger account. Choose AI with OpenAI and select a model to identify the columns from the headers and up to eight sample rows. Quant reads the full file locally. You can also choose Manual column mapping.",
               "For PDF statements, choose Local extraction for text-based files or AI with OpenAI for full PDF extraction, including scanned pages. Choose all files for the same ledger account together. On macOS, the local OCR option can also read scans.",
               "For Amazon, request your retail order history through your Amazon account’s Request My Data feature. Select the resulting order-history CSV or ZIP. Quant also accepts physical-order JSON from Amazon Data Portability.",
             ],
@@ -244,6 +244,8 @@ export const topicGroups = [
             title: "Review and submit the table",
             steps: [
               "Import statements for each account separately. Edit posting dates, descriptions, signed amounts, and categories in the table. Verified matches preserve the existing transaction’s category, labels, notes, and documents.",
+              "Quant suggests a category from prior transactions with the same description. New expenses and income without a suggestion default to Other expenses or Other income. You can change either in the table.",
+              "Open Edit table with a prompt to describe changes across the draft, such as filling missing dates, renaming descriptions, categorizing purchases, skipping rows, or sorting. Quant sends your prompt, editable rows, and available category and match options to OpenAI. Check the highlighted edits, or use Undo last prompt edit.",
               "Use Details to compare a row with its source or a proposed match. Choose how to handle ambiguous matches and use Skip row to leave out a transaction.",
               "Select Import transactions to submit the table. Quant clears the preview and confirms how many transactions were imported. Open Recent imports to see what was recorded.",
             ],
@@ -275,7 +277,7 @@ export const topicGroups = [
           {
             title: "Set up the key and select your documents",
             steps: [
-              "Choose PDF statements and AI with OpenAI. Paste an OpenAI API key and select Save key, or let Quant save it after a successful extraction. Use Change key or Remove key later in the same form.",
+              "Choose PDF statements and AI with OpenAI, then select an OpenAI model. Paste an API key and select Save key, or let Quant save it after a successful extraction. Use Change key or Remove key later in the same form.",
               "Choose the ledger account and select its PDFs together. Confirm that Quant can send the entire files to OpenAI. Quant saves a copy of each original under Original PDF statements.",
             ],
           },

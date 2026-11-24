@@ -106,6 +106,82 @@ class ImportsTests(unittest.TestCase):
         self.assertEqual(self.commit(self.decide(rows[1]), ready_only=True)["already"], 1)
         self.assertEqual(self.preview(data)["rows"][1]["review_group"], "handled")
 
+    def test_openai_csv_maps_samples_and_parses_every_transaction_locally(self):
+        columns = "Contabile;Causale;Addebiti;Accrediti;Saldo;Valuta;Codice"
+        purchases = [f"16/11/2026;Merchant {index};1.234,56;;5.000,00;EUR;BANK-{index}" for index in range(12)]
+        credit = "18/11/2026;Refund;;24,50;5.024,50;EUR;BANK-12"
+        data = self.input("\n".join([columns, *purchases, credit]), csv_method="openai",
+                          api_key="sk-synthetic-csv-test-key", openai_model="gpt-5.4-mini")
+        layout = {"mapping": {"date": 0, "name": 1, "debit": 2, "credit": 3, "currency": 5, "reference": 6},
+                  "date_format": "dmy", "amount_mode": "separate"}
+        with patch("apps.web.imports.suggest_csv_mapping", return_value=layout) as suggest:
+            with self.assertRaisesRegex(ApiError, "Confirm that Quant may send"):
+                self.api("/preview", data)
+            with self.assertRaises(ApiError) as invalid_model:
+                self.api("/preview", dict(data, ai_consent=True, openai_model="unknown"))
+            self.assertEqual(invalid_model.exception.field, "openai_model")
+            suggest.assert_not_called()
+            preview = self.api("/preview", dict(data, ai_consent=True))
+        headers, samples = suggest.call_args.args
+        self.assertEqual(headers, columns.split(";"))
+        self.assertEqual(len(samples), 8)
+        self.assertEqual(samples[0][1], "Merchant 0")
+        self.assertEqual(samples[-1][1], "Refund")
+        self.assertEqual(suggest.call_args.kwargs, {"api_key": data["api_key"], "model": data["openai_model"]})
+        self.assertEqual(preview["openai_model"], data["openai_model"])
+        self.assertEqual(preview["csv_layout"]["mapping"], layout["mapping"])
+        self.assertEqual(len(preview["rows"]), 13)
+        rows = preview["rows"]
+        self.assertEqual((rows[4]["posted_on"], rows[4]["name"], rows[4]["amount"]), ("2026-11-16", "Merchant 4", "-123456"))
+        self.assertEqual((rows[-1]["name"], rows[-1]["amount"]), ("Refund", "2450"))
+        manual = self.api("/preview", dict(data, csv_method="local", **layout))
+        self.assertEqual([row["review_key"] for row in rows], [row["review_key"] for row in manual["rows"]])
+
+    def test_review_prompt_sends_editable_fields_and_never_writes_to_the_ledger(self):
+        category = self.db.save_category({"kind": "expense", "name": "Groceries", "color": "mint"})
+        data = {
+            "source": "csv", "account_id": self.checking, "prompt": "Use 16-11-2026 for missing dates.",
+            "openai_model": "gpt-5.4-mini", "api_key": "sk-synthetic-edit-test-key",
+            "rows": [{"id": 3, "name": "Market", "posted_on": "", "amount": "-12.50", "token": "private-import-token"}],
+        }
+        suggested = {"updates": [{"rows": [3], "posted_on": "2026-11-16"}], "sort": None, "message": ""}
+        with patch("apps.web.imports.suggest_review_edits", return_value=suggested) as suggest:
+            with self.assertRaisesRegex(ApiError, "Confirm that Quant may send"):
+                self.api("/review-prompt", data)
+            suggest.assert_not_called()
+            result = self.api("/review-prompt", dict(data, ai_consent=True))
+        prompt, context = suggest.call_args.args
+        self.assertEqual(prompt, data["prompt"])
+        self.assertEqual(context["rows"], [{"id": 3, "name": "Market", "posted_on": "", "amount": "-12.50"}])
+        self.assertEqual([(item["id"], item["name"]) for item in context["categories"]], [(category, "Groceries")])
+        self.assertEqual(suggest.call_args.kwargs, {"api_key": data["api_key"], "model": data["openai_model"]})
+        self.assertEqual(result["updates"], suggested["updates"])
+        self.assertEqual(self.db.ledger().entries, [])
+        self.assertEqual(self.api("/setup")["history"], [])
+
+    def test_import_defaults_create_and_reuse_categories_and_allow_overrides(self):
+        groceries = self.db.save_category({"kind": "expense", "name": "Groceries", "color": "mint"})
+        other_income = self.db.save_category({"kind": "income", "name": "Other income", "color": "sky"})
+        self.db.save_entry({"kind": "expense", "name": "Market", "amount": "20", "category_id": groceries,
+                            "account_id": self.checking, "posted_on": "2026-11-01"}, TODAY)
+        rows = self.preview(self.input("Date,Description,Amount\n2026-11-16,Market,-15\n2026-11-16,Unknown,-1\n"
+                                       "2026-11-17,Refund,3\n2026-11-17,No category,-4\n"))["rows"]
+        self.assertEqual(rows[0]["suggested_category_id"], groceries)
+        with self.assertRaises(ApiError):
+            self.commit(self.decide(rows[1]), self.decide(rows[2], amount="invalid"))
+        self.assertEqual(len(self.db.ledger().categories), 2)
+        self.commit(self.decide(rows[0], category_id=str(groceries)), self.decide(rows[1]),
+                    self.decide(rows[2], category_id="default"), self.decide(rows[3], category_id=""))
+        ledger = self.db.ledger()
+        defaults = [item for item in ledger.categories if item["name"] == "Other expenses"]
+        self.assertEqual(len(defaults), 1)
+        categories = {entry["name"]: entry["category_id"] for entry in ledger.entries}
+        self.assertEqual(categories, {"Market": groceries, "Unknown": defaults[0]["id"], "Refund": other_income, "No category": None})
+        later = self.preview(self.input("Date,Description,Amount\n2026-11-19,Unknown,-6\n"))["rows"][0]
+        self.assertIsNone(later["suggested_category_id"])
+        self.commit(self.decide(later))
+        self.assertEqual(len(self.db.ledger().categories), 3)
+
     def test_bank_statement_approval_links_existing_expense_without_changing_it(self):
         category = self.db.save_category({"name": "Coffee shops", "color": "amber", "kind": "expense"})
         entry = self.db.save_entry({"kind": "expense", "name": "Caffè Corner", "amount": "8.70",

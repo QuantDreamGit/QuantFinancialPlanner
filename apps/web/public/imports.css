@@ -18,6 +18,14 @@
 .imports-review-header h2 { margin-bottom: 3px; }
 .imports-review-toolbar { padding: 10px 12px; margin: 12px 0; background: var(--subtle); border: 1px solid var(--border); border-radius: 8px; }
 .imports-review-count { font-size: .88rem; font-weight: 630; }
+.imports-prompt { padding: 9px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+.imports-prompt > summary { font-weight: 630; cursor: pointer; }
+.imports-prompt-form { display: grid; gap: 8px; margin-top: 10px; }
+.imports-prompt-form > p { font-size: .85rem; }
+.imports-prompt-form > p:empty { display: none; }
+.imports-prompt-settings { display: flex; align-items: end; flex-wrap: wrap; gap: 8px 12px; }
+.imports-prompt-settings .field { width: min(100%, 23rem); }
+.imports-review-table .imports-prompt-updated td { background: var(--primary-pale); }
 .imports-review-scroll { max-height: 34rem; border: 1px solid var(--border); border-radius: 8px; }
 .imports-review-table { min-width: 54rem; white-space: normal; }
 .imports-review-table th { position: sticky; top: 0; z-index: 1; white-space: nowrap; padding: 9px 8px; }
@@ -42,6 +50,7 @@
 .imports-review-files > summary { font-weight: 630; }
 .imports-check { display: flex; align-items: center; gap: 7px; }
 .imports-ai { display: grid; gap: 8px; margin-top: 10px; padding: 10px 12px; background: var(--subtle); border-radius: 9px; }
+.imports-ai-model { width: min(100%, 23rem); }
 .imports-ai .imports-consent { align-items: start; font-weight: 610; }
 .imports-consent input { flex: 0 0 auto; margin-top: .28em; }
 .imports-ai > p, .imports-ai-key > .text-link { font-size: .85rem; }

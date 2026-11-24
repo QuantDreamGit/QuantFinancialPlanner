@@ -80,7 +80,7 @@ class OpenAIStatementImportTests(unittest.TestCase):
             first = self.preview()
             second = self.preview(second_pdf, filename="October.pdf")
         self.assertEqual(self.provider.call_args_list[0].args, (PDF,))
-        self.assertEqual(self.provider.call_args_list[0].kwargs, {"api_key": KEY})
+        self.assertEqual(self.provider.call_args_list[0].kwargs, {"api_key": KEY, "model": "gpt-4.1-mini"})
         self.assertEqual(first["name"], f"Bill - {TODAY.isoformat()}")
         for item, contents in ((first, PDF), (second, second_pdf)):
             self.assertEqual(item["extraction"]["totals_check"], "matched")

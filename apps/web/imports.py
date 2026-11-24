@@ -20,8 +20,10 @@ from pathlib import Path
 
 from .forecast import calendar_occurrences, post_occurrence
 from .import_ai import configured as ai_configured, extract_statement, validate_api_key
+from .import_openai import MODEL as OPENAI_DEFAULT_MODEL, MODELS as OPENAI_MODELS
 from .import_openai import configured as openai_configured, extract_statement as extract_openai_statement
-from .import_openai import validate_api_key as validate_openai_key
+from .import_openai import suggest_csv_mapping, suggest_review_edits
+from .import_openai import validate_api_key as validate_openai_key, validate_model as validate_openai_model
 from .import_summary import import_report
 from .reports import movements
 from .shared import _expected_status, _record_expected, _settle
@@ -36,6 +38,7 @@ MAX_TEXT = 4 * 1024 * 1024
 MAX_RAW_ROWS = 20_000
 MAX_ROWS = 4_000
 MAX_COMMIT = 24 * 1024 * 1024
+MAX_REVIEW_PROMPT = 2 * 1024 * 1024
 MAX_ARCHIVE_FILES = 2_000
 DAY = timedelta(days=1)
 TOKEN_KEY = secrets.token_bytes(32)
@@ -45,6 +48,7 @@ GENERIC_PAYMENT_WORDS = {"bank", "card", "credit", "debit", "expense", "masterca
                          "pos", "purchase", "sepa", "transaction", "transfer", "visa"}
 DATE_FIELDS = ("auto", "dmy", "mdy", "ymd")
 AMOUNT_MODES = ("debit-negative", "debit-positive", "separate")
+DEFAULT_IMPORT_CATEGORIES = {"expense": "Other expenses", "income": "Other income"}
 COLUMNS = {
     "date": ("date", "postingdate", "bookeddate", "bookingdate", "transactiondate", "valuedate", "completeddate", "datum", "boekdatum"),
     "name": ("name", "description", "payee", "merchant", "counterparty", "details", "remittanceinformation", "naamomschrijving", "omschrijving"),
@@ -261,9 +265,9 @@ def _column_amount(row, mapping, mode):
     value = parse_amount(grab("amount"))
     direction = _normalized_header(grab("direction"))
     if direction:
-        if direction in ("af", "debit", "d", "dr", "db", "out", "withdrawal"):
+        if direction in ("af", "debit", "d", "dr", "db", "out", "withdrawal", "dare", "addebito", "uscita"):
             return -abs(value)
-        if direction in ("bij", "credit", "c", "cr", "in", "deposit"):
+        if direction in ("bij", "credit", "c", "cr", "in", "deposit", "avere", "accredito", "entrata"):
             return abs(value)
         raise ApiError("This debit/credit label was not recognized.", "direction")
     return value if mode == "debit-negative" else -value
@@ -444,6 +448,27 @@ def _pdf_method(data):
     return method
 
 
+def _csv_method(data):
+    method = choice(data.get("csv_method", "local"), ("local", "openai"), "csv_method")
+    if data.get("source") != "csv" and method != "local":
+        raise ApiError("Choose a CSV statement for OpenAI column mapping.", "source")
+    return method
+
+
+def _ai_key(data, key_store, user_id, validate):
+    supplied = data.get("api_key")
+    if supplied is None:
+        return (key_store.get(user_id) if key_store else None), False
+    return validate(supplied), bool(key_store and key_store.available and not key_store.has(user_id))
+
+
+def _remember_ai_key(key_store, user_id, api_key, provider, notices):
+    try:
+        key_store.save(user_id, api_key, only_if_missing=True)
+    except ApiError:
+        notices.append(f"{provider} worked for this import, but Quant could not save the key. Try the key settings.")
+
+
 def _ai_pdf(data, database, account_id, key_store, user_id, method, batch_name, today):
     use_openai = method == "openai"
     provider = "OpenAI" if use_openai else "Groq"
@@ -452,19 +477,13 @@ def _ai_pdf(data, database, account_id, key_store, user_id, method, batch_name, 
         raise ApiError(f"Confirm that Quant may send {material} to {provider}.", "ai_consent")
     with database.connection(snapshot=True) as conn:
         _set_account(conn, account_id)
-    supplied_key = data.get("api_key")
-    remember_key = False
-    if supplied_key is not None:
-        api_key = (validate_openai_key if use_openai else validate_api_key)(supplied_key)
-        remember_key = key_store is not None and key_store.available and not key_store.has(user_id)
-    else:
-        api_key = key_store.get(user_id) if key_store else None
+    api_key, remember_key = _ai_key(data, key_store, user_id, validate_openai_key if use_openai else validate_api_key)
     binary = _file(data)
     document = None
     contents = ""
     if use_openai:
         document = archive_statement_pdf(database, account_id, data.get("filename"), batch_name, binary, today)
-        extracted = extract_openai_statement(binary, api_key=api_key)
+        extracted = extract_openai_statement(binary, api_key=api_key, model=data["openai_model"])
     else:
         contents = _pdf_text(binary, ocr=data.get("ocr") is True)
         if not contents.strip():
@@ -472,10 +491,7 @@ def _ai_pdf(data, database, account_id, key_store, user_id, method, batch_name, 
         extracted = extract_statement(contents, api_key=api_key)
     notices = list(extracted["notices"])
     if remember_key:
-        try:
-            key_store.save(user_id, api_key, only_if_missing=True)
-        except ApiError:
-            notices.append(f"{provider} worked for this import, but Quant could not save the key. Try the key settings.")
+        _remember_ai_key(key_store, user_id, api_key, provider, notices)
     fields = ("date", "description", "amount", "currency", "reference")
     rows = [(index, [row[field] for field in fields]) for index, row in enumerate(extracted["rows"], 1)]
     return ["Date", "Description", "Amount", "Currency", "Reference"], rows, contents, notices, binary, document, extracted
@@ -505,6 +521,79 @@ def _mapping(data, headers, source):
     if not needed <= supplied.keys():
         raise ApiError("Map the date, description, and amount columns.", "mapping")
     return supplied
+
+
+def _openai_csv_layout(database, data, account_id, headers, rows, key_store, user_id):
+    if data.get("ai_consent") is not True:
+        raise ApiError("Confirm that Quant may send CSV headers and sample rows to OpenAI.", "ai_consent")
+    with database.connection(snapshot=True) as conn:
+        _set_account(conn, account_id)
+    api_key, remember_key = _ai_key(data, key_store, user_id, validate_openai_key)
+    count = min(8, len(rows))
+    indices = [index * (len(rows) - 1) // (count - 1) for index in range(count)] if count > 1 else [0]
+    samples = [[_clean(cell, 100) for cell in rows[index][1][:len(headers)]] for index in indices]
+    layout = suggest_csv_mapping(headers, samples, api_key=api_key, model=data["openai_model"])
+    if layout["amount_mode"] is None:
+        raise ApiError("OpenAI could not determine which amounts are debits or credits. Use manual column mapping.", "amount_mode")
+    try:
+        _mapping(layout, headers, "csv")
+    except ApiError as error:
+        raise ApiError("OpenAI could not identify a complete CSV layout. Use manual column mapping. " + str(error),
+                       error.field) from error
+    notices = []
+    if remember_key:
+        _remember_ai_key(key_store, user_id, api_key, "OpenAI", notices)
+    return layout, notices
+
+
+def _review_prompt(database, data, today, key_store, user_id):
+    if data.get("ai_consent") is not True:
+        raise ApiError("Confirm that Quant may send the prompt and editable rows to OpenAI.", "ai_consent")
+    prompt = line(data.get("prompt"), "prompt", 2000)
+    model = validate_openai_model(data.get("openai_model", OPENAI_DEFAULT_MODEL))
+    source = choice(data.get("source"), SOURCES, "source")
+    account_id = identifier(data.get("account_id"), "account_id")
+    supplied_rows = data.get("rows")
+    if (not isinstance(supplied_rows, list) or not 1 <= len(supplied_rows) <= MAX_ROWS
+            or any(not isinstance(row, dict) or type(row.get("id")) is not int or row["id"] < 1 for row in supplied_rows)):
+        raise ApiError("Use a review with 1 to 4,000 editable rows for one prompt.", "rows")
+    rows = []
+    ids = set()
+    for row in supplied_rows:
+        if row["id"] in ids:
+            raise ApiError("The table contains repeated row identifiers.", "rows")
+        ids.add(row["id"])
+        fields = {field: _clean(row[field], 150) for field in (
+            "posted_on", "name", "amount", "category_id", "action", "target", "currency", "reference", "source", "line",
+        ) if field in row}
+        choices = row.get("choices")
+        if isinstance(choices, dict):
+            fields["choices"] = {
+                action: [[_clean(pair[0], 60), _clean(pair[1], 150)] for pair in choices[action][:12]
+                         if isinstance(pair, list) and len(pair) == 2]
+                for action in ("link", "commitment", "expected") if isinstance(choices.get(action), list)
+            }
+        rows.append({"id": row["id"], **fields})
+    with database.connection(snapshot=True) as conn:
+        account = _set_account(conn, account_id)
+        categories = [dict(row) for row in conn.execute("""
+            SELECT id, name, kind, parent_id FROM categories WHERE id > 0 AND kind IN ('income', 'expense') ORDER BY name
+        """)]
+        targets = {} if source == "amazon" else {
+            "transfer": [list(row) for row in conn.execute("SELECT id, name FROM accounts WHERE id > 0 AND id <> ?", (account_id,))],
+            "settle": [list(row) for row in conn.execute("SELECT id, name FROM shared_people WHERE id > 0")],
+        }
+    context = {"rows": rows, "categories": categories, "default_categories": DEFAULT_IMPORT_CATEGORIES,
+               "targets": targets, "source_type": source, "today": today.isoformat(), "account_opened_on": account["opened_on"]}
+    api_key, remember_key = _ai_key(data, key_store, user_id, validate_openai_key)
+    result = suggest_review_edits(prompt, context, api_key=api_key, model=model)
+    notices = []
+    if remember_key:
+        _remember_ai_key(key_store, user_id, api_key, "OpenAI", notices)
+    if key_store:
+        result["ai"] = _ai_configuration(key_store, user_id, "OpenAI")
+    result["notices"] = notices
+    return result
 
 
 def _token(payload):
@@ -662,10 +751,12 @@ def _openai_totals(extraction, rows):
 
 
 def _remembered_categories(ledger, account_id):
+    defaults = {category["id"] for category in ledger.categories if category["parent_id"] is None
+                and category["name"].casefold() == DEFAULT_IMPORT_CATEGORIES.get(category["kind"], "").casefold()}
     remembered = defaultdict(set)
     for entry in ledger.entries:
         if (entry["account_id"] == account_id and entry["kind"] in ("expense", "income")
-                and entry["category_id"] is not None and not entry.get("shared")):
+                and entry["category_id"] is not None and entry["category_id"] not in defaults and not entry.get("shared")):
             name = _normalized_header(entry["name"])
             if name:
                 remembered[entry["kind"], name].add(entry["category_id"])
@@ -675,8 +766,11 @@ def _remembered_categories(ledger, account_id):
 def _preview(database, data, today, *, key_store=None, user_id=None):
     source = choice(data.get("source"), SOURCES, "source")
     method = _pdf_method(data)
+    csv_openai = _csv_method(data) == "openai"
     ai = method != "local"
     openai = method == "openai"
+    if openai or csv_openai:
+        data = {**data, "openai_model": validate_openai_model(data.get("openai_model", OPENAI_DEFAULT_MODEL))}
     account_id = identifier(data.get("account_id"), "account_id")
     batch_name = _batch_name(data, source, today)
     document = None
@@ -691,6 +785,9 @@ def _preview(database, data, today, *, key_store=None, user_id=None):
         ai_notices = []
     if len(raw_rows) > MAX_ROWS:
         raise ApiError("Split the file into batches of up to 4,000 transactions.", "file")
+    if csv_openai:
+        layout, csv_notices = _openai_csv_layout(database, data, account_id, headers, raw_rows, key_store, user_id)
+        data = {**data, **layout}
     mapping = _mapping(data, headers, source)
     date_order = "ymd" if ai or source == "amazon" else choice(data.get("date_format", "auto"), DATE_FIELDS, "date_format")
     mode = "debit-negative" if ai or source == "amazon" else choice(
@@ -744,7 +841,7 @@ def _preview(database, data, today, *, key_store=None, user_id=None):
             if not name:
                 errors.append("Add a description.")
             blocked = bool(currency and currency not in ("EUR", "€"))
-            currency_unconfirmed = ai and not currency
+            currency_unconfirmed = not currency and (ai or (csv_openai and mapping.get("currency") is not None))
             if blocked:
                 errors.append("This row is not in euros.")
             if currency_unconfirmed or (source == "csv" and mapping.get("currency") is not None and not currency):
@@ -845,6 +942,9 @@ def _preview(database, data, today, *, key_store=None, user_id=None):
             row["statement_description"],
         ]))
     notices = []
+    if csv_openai:
+        notices.append("Check the parsed dates and amounts against your statement. To adjust the layout, choose Manual column mapping in Import settings.")
+        notices.extend(csv_notices)
     if source == "pdf":
         if data.get("ocr") is True and not openai:
             notices.append("Review dates, decimals, and debit or credit signs against the scan. OCR may misread characters.")
@@ -867,8 +967,13 @@ def _preview(database, data, today, *, key_store=None, user_id=None):
     result = {"source": source, "rows": normalized, "notices": notices, "extracted": extracted,
               "name": batch_name, "pdf_method": method if source == "pdf" else None,
               "summary": import_report(normalized)}
-    if ai and key_store:
-        result["ai"] = _ai_configuration(key_store, user_id, "OpenAI" if openai else "Groq")
+    if csv_openai:
+        result["csv_method"] = "openai"
+        result["csv_layout"] = {"headers": headers, "sample": [row[:len(headers)] for _, row in raw_rows[:6]], **layout}
+    if openai or csv_openai:
+        result["openai_model"] = data["openai_model"]
+    if (ai or csv_openai) and key_store:
+        result["ai"] = _ai_configuration(key_store, user_id, "OpenAI" if openai or csv_openai else "Groq")
     if totals is not None:
         result["extraction"] = totals
     if document is not None:
@@ -879,6 +984,8 @@ def _preview(database, data, today, *, key_store=None, user_id=None):
 def _inspect(data):
     if _pdf_method(data) != "local":
         raise ApiError("Use Review transactions to extract a PDF with an AI provider.", "pdf_method")
+    if _csv_method(data) != "local":
+        raise ApiError("Use Review transactions for OpenAI CSV mapping.", "csv_method")
     source, headers, rows, extracted, uncertain, _ = _extract(data)
     return {
         "source": source, "headers": headers, "mapping": _map_columns(headers),
@@ -895,6 +1002,18 @@ def _movement_entry(rule, amount, name, posted, category=None):
     }
 
 
+def _default_import_category(conn, kind):
+    name = DEFAULT_IMPORT_CATEGORIES[kind]
+    category = conn.execute("""
+        SELECT id FROM categories WHERE id > 0 AND kind = ? AND parent_id IS NULL AND name = ?
+    """, (kind, name)).fetchone()
+    if category:
+        return category["id"]
+    return conn.execute("""
+        INSERT INTO categories (kind, name, color) VALUES (?, ?, 'slate')
+    """, (kind, name)).lastrowid
+
+
 def _make_entry(database, conn, today, pending, ledger, scope):
     source, account_id, _, reference, blocked, _, currency_unconfirmed, *_ = scope
     if blocked:
@@ -908,7 +1027,9 @@ def _make_entry(database, conn, today, pending, ledger, scope):
         raise ApiError("Enter a nonzero amount within the supported range.", "amount")
     name = line(pending.get("name"), "name", 100)
     action = choice(pending.get("action"), ("create", "link", "transfer", "commitment", "expected", "settle"), "action")
-    category = identifier(pending.get("category_id"), "category_id")
+    category_value = pending.get("category_id", "default" if action == "create" else None)
+    default_category = action == "create" and category_value == "default"
+    category = None if default_category else identifier(category_value, "category_id")
     account = _set_account(conn, account_id)
     if posted < account["opened_on"]:
         raise ApiError("The import date must be on or after the account opening date.", "posted_on")
@@ -956,9 +1077,10 @@ def _make_entry(database, conn, today, pending, ledger, scope):
         entry = _movement_entry({"kind": kind, "account_id": source_id, "destination_id": destination_id, "category_id": None},
                                 cents, name, posted, category if kind == "investment" else None)
     else:
+        kind = "income" if cents > 0 else "expense"
         entry = {
-            "kind": "income" if cents > 0 else "expense", "name": name, "posted_on": posted,
-            "amount": euros(abs(cents)), "account_id": account_id, "category_id": category,
+            "kind": kind, "name": name, "posted_on": posted, "amount": euros(abs(cents)),
+            "account_id": account_id, "category_id": _default_import_category(conn, kind) if default_category else category,
         }
     entry_id = database.save_entry(dict(entry, note=note, labels=labels), today, conn=conn)
     if action == "commitment":
@@ -1080,6 +1202,9 @@ def _setup(database, today, key_store, user_id, openai_store):
             "today": today.isoformat(),
             "accounts": [dict(row) for row in conn.execute("SELECT id, name, kind, opened_on FROM accounts WHERE id>0 ORDER BY name")],
             "categories": [dict(row) for row in conn.execute("SELECT * FROM categories WHERE id>0 ORDER BY name")],
+            "default_categories": DEFAULT_IMPORT_CATEGORIES,
+            "openai_models": OPENAI_MODELS,
+            "openai_default_model": OPENAI_DEFAULT_MODEL,
             "people": [dict(row) for row in conn.execute("SELECT id, name, tag FROM shared_people ORDER BY name")],
             "history": [dict(row) for row in conn.execute("""
                 SELECT import_batches.*, accounts.name AS account
@@ -1149,11 +1274,14 @@ def handle_imports(handler, path, query, method, today):
     if batch and method == "GET":
         return _batch(database, int(batch[1]), query), 200
     if method == "POST":
+        if resource == "review-prompt":
+            return _review_prompt(database, handler.read_data(MAX_REVIEW_PROMPT), today, openai_store, user_id), 200
         if resource == "inspect":
             return _inspect(handler.read_data((MAX_FILE + 2) // 3 * 4 + 20_000)), 200
         if resource == "preview":
             data = handler.read_data((MAX_FILE + 2) // 3 * 4 + 20_000)
-            store = openai_store if data.get("pdf_method") == "openai" else key_store
+            use_openai = data.get("pdf_method") == "openai" or data.get("csv_method") == "openai"
+            store = openai_store if use_openai else key_store
             return _preview(database, data, today, key_store=store, user_id=user_id), 200
         if resource == "commit":
             return _commit(database, handler.read_data(MAX_COMMIT), today), 201

@@ -71,13 +71,15 @@ class OpenAIKeyHttpTests(unittest.TestCase):
     def status(self, **scope):
         return self.request("GET", IMPORTS + "/setup", **scope)[0]["openai"]
 
-    def preview(self, account_id, *, expected=200, consent=True, api_key=None, **scope):
+    def preview(self, account_id, *, expected=200, consent=True, api_key=None, model=None, **scope):
         data = {"source": "pdf", "pdf_method": "openai", "file": base64.b64encode(PDF).decode(),
                 "filename": "November.pdf", "account_id": account_id}
         if consent is not None:
             data["ai_consent"] = consent
         if api_key is not None:
             data["api_key"] = api_key
+        if model is not None:
+            data["openai_model"] = model
         return self.request("POST", IMPORTS + "/preview", expected=expected, data=data, **scope)[0]
 
     def household(self):
@@ -97,18 +99,18 @@ class OpenAIKeyHttpTests(unittest.TestCase):
         self.assertFalse(self.status(cookie=self.owner)["configured"])
         first = self.preview(self.account, cookie=self.owner, api_key=OWNER_KEY)
         self.assertTrue(first["ai"]["saved_key"])
-        self.provider.assert_called_once_with(PDF, OWNER_KEY)
+        self.provider.assert_called_once_with(PDF, OWNER_KEY, "gpt-4.1-mini")
 
         self.request("POST", "/api/auth/logout", cookie=self.owner, data={})
         _, headers = self.request("POST", "/api/auth/login", data={"username": "owner", "password": PASSWORD})
         cookie = self.cookie(headers)
         self.preview(self.account, cookie=cookie)
-        self.provider.assert_called_with(PDF, OWNER_KEY)
+        self.provider.assert_called_with(PDF, OWNER_KEY, "gpt-4.1-mini")
 
         updated = self.request("PUT", KEY_ROUTE, cookie=cookie, data={"api_key": REPLACEMENT_KEY})[0]["ai"]
         self.assertTrue(updated["saved_key"])
         self.preview(self.account, cookie=cookie)
-        self.provider.assert_called_with(PDF, REPLACEMENT_KEY)
+        self.provider.assert_called_with(PDF, REPLACEMENT_KEY, "gpt-4.1-mini")
 
         removed = self.request("DELETE", KEY_ROUTE, cookie=cookie)[0]["ai"]
         self.assertFalse(removed["saved_key"])
@@ -120,7 +122,21 @@ class OpenAIKeyHttpTests(unittest.TestCase):
             fallback = self.preview(self.account, cookie=cookie)["ai"]
         self.assertTrue(fallback["server_key"])
         self.assertFalse(fallback["saved_key"])
-        self.provider.assert_called_with(PDF, SERVER_KEY)
+        self.provider.assert_called_with(PDF, SERVER_KEY, "gpt-4.1-mini")
+
+    def test_csv_and_pdf_share_the_saved_openai_key(self):
+        layout = {"mapping": {"date": 0, "name": 1, "amount": 2},
+                  "date_format": "ymd", "amount_mode": "debit-negative"}
+        data = {"source": "csv", "csv_method": "openai", "ai_consent": True, "account_id": self.account,
+                "file": base64.b64encode(b"Date,Name,Amount\n2026-11-18,Fare,-5.00").decode()}
+        with patch("apps.web.imports.suggest_csv_mapping", return_value=layout) as suggest:
+            first, _ = self.request("POST", IMPORTS + "/preview", data=dict(data, api_key=OWNER_KEY), cookie=self.owner)
+            self.assertTrue(first["ai"]["saved_key"])
+            self.request("POST", IMPORTS + "/preview", data=data, cookie=self.owner)
+        self.assertEqual([call.kwargs["api_key"] for call in suggest.call_args_list], [OWNER_KEY, OWNER_KEY])
+        preview = self.preview(self.account, cookie=self.owner, model="gpt-5.4")
+        self.provider.assert_called_once_with(PDF, OWNER_KEY, "gpt-5.4")
+        self.assertEqual(preview["openai_model"], "gpt-5.4")
 
     def test_members_of_the_same_workspace_use_only_their_own_credentials(self):
         partner, group = self.household()
@@ -135,15 +151,15 @@ class OpenAIKeyHttpTests(unittest.TestCase):
 
         self.preview(joint, cookie=partner, workspace=group, api_key=MEMBER_KEY)
         self.assertTrue(self.status(cookie=partner)["saved_key"])
-        self.provider.assert_called_with(PDF, MEMBER_KEY)
+        self.provider.assert_called_with(PDF, MEMBER_KEY, "gpt-4.1-mini")
         self.preview(joint, cookie=self.owner, workspace=group)
-        self.provider.assert_called_with(PDF, OWNER_KEY)
+        self.provider.assert_called_with(PDF, OWNER_KEY, "gpt-4.1-mini")
 
         self.request("DELETE", KEY_ROUTE, cookie=partner, workspace=group)
         self.assertFalse(self.status(cookie=partner)["saved_key"])
         self.assertTrue(self.status(cookie=self.owner, workspace=group)["saved_key"])
         self.preview(joint, cookie=self.owner, workspace=group)
-        self.provider.assert_called_with(PDF, OWNER_KEY)
+        self.provider.assert_called_with(PDF, OWNER_KEY, "gpt-4.1-mini")
 
     def test_unauthenticated_or_unconsented_requests_never_reach_provider(self):
         self.request("GET", IMPORTS + "/setup", expected=401)
@@ -165,4 +181,4 @@ class OpenAIKeyHttpTests(unittest.TestCase):
         result = self.preview(self.account, cookie=self.owner, expected=422, api_key=REJECTED_KEY)
         self.assertEqual(result["error"]["field"], "api_key")
         self.assertFalse(self.status(cookie=self.owner)["saved_key"])
-        self.provider.assert_called_once_with(PDF, REJECTED_KEY)
+        self.provider.assert_called_once_with(PDF, REJECTED_KEY, "gpt-4.1-mini")

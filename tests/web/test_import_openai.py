@@ -35,7 +35,7 @@ class OpenAIPDFTests(unittest.TestCase):
     def extract(self, *rows, **overrides):
         with patch.object(openai, "_request", return_value=response(result(rows, **overrides))) as request:
             extracted = openai.extract_statement(PDF, api_key=KEY)
-        request.assert_called_once_with(PDF, KEY)
+        request.assert_called_once_with(PDF, KEY, openai.MODEL)
         return extracted
 
     def test_request_posts_inline_pdf_with_strict_schema_and_no_tools(self):
@@ -61,6 +61,18 @@ class OpenAIPDFTests(unittest.TestCase):
         network.getresponse.return_value.read.assert_called_once_with(openai.MAX_RESPONSE_BYTES + 1)
         network.close.assert_called_once()
         self.assertEqual(extraction["rows"][0]["reference"], "BANK-001")
+
+    def test_selected_model_and_reasoning_metadata_are_supported(self):
+        envelope = json.loads(response(result([row()])))
+        envelope["output"].insert(0, {"type": "reasoning", "summary": []})
+        selected = "gpt-5.4"
+        with patch.object(openai, "_send", return_value=json.dumps(envelope).encode()) as send:
+            extraction = openai.extract_statement(PDF, api_key=KEY, model=selected)
+            self.assertEqual(send.call_args.args[0]["model"], selected)
+            self.assertEqual(extraction["rows"][0]["reference"], "BANK-001")
+            with self.assertRaisesRegex(ApiError, "Choose one of the listed options"):
+                openai.extract_statement(PDF, api_key=KEY, model="unknown")
+            self.assertEqual(send.call_count, 1)
 
     def test_keeps_duplicate_bookings_and_normalizes_printed_totals_in_order(self):
         extracted = self.extract(row(), row(), row(amount="+30", page=3, reference="BANK-002"),
@@ -160,6 +172,47 @@ class OpenAIPDFTests(unittest.TestCase):
         network.close.assert_called_once()
         self.assertEqual(failure.exception.status, 502)
         self.assertNotIn(KEY, str(failure.exception))
+
+
+class OpenAICSVTests(unittest.TestCase):
+    def test_maps_numbered_columns_from_samples_with_a_strict_text_schema(self):
+        headers = ["Booking", "Merchant", "Debited"]
+        samples = [["17.11.2026", "Caffè Corner", "8,75"]]
+        mapping = dict.fromkeys(openai.CSV_FIELDS) | {"date": 0, "name": 1, "amount": 2}
+        layout = {"mapping": mapping, "date_format": "dmy", "amount_mode": "debit-positive"}
+        with patch.object(openai, "_send", return_value=response(layout)) as send:
+            result = openai.suggest_csv_mapping(headers, samples, api_key=KEY, model="gpt-5.4-mini")
+        payload, key, subject = send.call_args.args
+        self.assertEqual((key, subject), (KEY, "CSV"))
+        self.assertEqual(payload["model"], "gpt-5.4-mini")
+        self.assertEqual(json.loads(payload["input"]), {"headers": headers, "samples": samples})
+        self.assertFalse(payload["store"])
+        self.assertTrue(payload["text"]["format"]["strict"])
+        self.assertEqual(result, dict(layout, mapping={"date": 0, "name": 1, "amount": 2}))
+
+        for invalid in (True, -1, 3):
+            bad_layout = dict(layout, mapping=dict(mapping, date=invalid))
+            with self.subTest(invalid=invalid), patch.object(openai, "_send", return_value=response(bad_layout)):
+                with self.assertRaisesRegex(ApiError, "invalid column layout"):
+                    openai.suggest_csv_mapping(headers, samples, api_key=KEY)
+
+
+class OpenAIReviewPromptTests(unittest.TestCase):
+    def test_returns_only_changes_and_rejects_rows_outside_the_draft(self):
+        draft = {"rows": [{"id": 1, "posted_on": "2026-11-17"}, {"id": 28, "posted_on": ""}]}
+        update = dict.fromkeys(openai.EDIT_PROPERTIES) | {"rows": [28], "posted_on": "2026-11-16"}
+        suggested = {"updates": [update], "sort": None, "message": None}
+        instruction = "Use 16-11-2026 for missing dates."
+        with patch.object(openai, "_send", return_value=response(suggested)) as send:
+            result = openai.suggest_review_edits(instruction, draft, api_key=KEY, model="gpt-5.4-mini")
+        payload, key, subject = send.call_args.args
+        self.assertEqual((key, subject, payload["model"]), (KEY, "review table", "gpt-5.4-mini"))
+        self.assertEqual(json.loads(payload["input"]), {"instruction": instruction, "table": draft})
+        self.assertFalse(payload["store"])
+        self.assertEqual(result["updates"], [{"rows": [28], "posted_on": "2026-11-16"}])
+        with patch.object(openai, "_send", return_value=response(dict(suggested, updates=[dict(update, rows=[7])]))):
+            with self.assertRaisesRegex(ApiError, "invalid table edits"):
+                openai.suggest_review_edits(instruction, draft, api_key=KEY)
 
 
 if __name__ == "__main__":

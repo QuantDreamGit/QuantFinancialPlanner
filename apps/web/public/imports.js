@@ -9,6 +9,10 @@ const pdfProviders = {
   openai: { name: "OpenAI", settings: "openai", keyEndpoint: "openai-key", keysUrl: "https://platform.openai.com/api-keys",
     consent: "Send each selected PDF in full to OpenAI, including scanned pages, to identify transactions." },
 };
+const csvOpenAi = {
+  ...pdfProviders.openai,
+  consent: "Send the CSV column names and up to eight sample rows to OpenAI to identify the statement layout.",
+};
 const fieldNames = {
   date: "Posting date", name: "Description", amount: "Signed amount", debit: "Debit (money out)",
   credit: "Credit (money in)", direction: "Debit/credit indicator", currency: "Currency", reference: "Bank transaction ID",
@@ -29,9 +33,14 @@ const otherMovementActions = new Set(["transfer", "settle", "expected"]);
 const archiveEndpoint = endpoint + "documents";
 const fileSize = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 });
 const matchFields = { link: "entry_id", commitment: "commitment", expected: "expected_id" };
+const targetFields = { ...matchFields, transfer: "other_account_id", settle: "person_id" };
+
+function editable(row) {
+  return row.existing == null && !row.blocked;
+}
 
 function included(row) {
-  return row.existing == null && !row.blocked && row.action !== "skip";
+  return editable(row) && row.action !== "skip";
 }
 
 function select(pairs, value) {
@@ -247,8 +256,10 @@ function mergePdfRows(rows) {
 
 function previewLabel(result) {
   const title = result.name || sourceNames[result.source] || "Statement";
+  const model = result.openai_model ? " · " + result.openai_model : "";
+  if (result.csv_method === "openai") return title + " · Columns identified with OpenAI" + model;
   const provider = pdfProviders[result.pdf_method];
-  return title + (provider ? " · Extracted with " + provider.name : "");
+  return title + (provider ? " · Extracted with " + provider.name + model : "");
 }
 
 function sourceLabel(row) {
@@ -348,8 +359,13 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
   importName.maxLength = 100;
   const pdfMethod = select(pdfChoices, "local");
   const pdfMethodLabel = label("PDF extraction", pdfMethod);
+  const csvMethod = select([["local", "Manual column mapping"], ["openai", "AI with OpenAI"]], "local");
+  const csvMethodLabel = label("CSV import method", csvMethod);
   const aiPanel = element("div", "imports-ai");
   aiPanel.hidden = true;
+  const openaiModel = select([], "");
+  const modelLabel = label("OpenAI model", openaiModel);
+  modelLabel.classList.add("imports-ai-model");
   const consent = element("input");
   consent.type = "checkbox";
   const consentLabel = element("label", "imports-check imports-consent");
@@ -379,7 +395,7 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
   keyControls.append(keyChange, keyRemove);
   keyState.append(keyStatus, keyControls);
   keyPanel.append(keyLabel, keySave, keyCancel, keyLink, keyHint);
-  aiPanel.append(keyState, keyPanel, consentLabel, consentDetails);
+  aiPanel.append(modelLabel, keyState, keyPanel, consentLabel, consentDetails);
   const ocr = element("input");
   ocr.type = "checkbox";
   const ocrLabel = element("label", "imports-check");
@@ -397,7 +413,7 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
   const review = action("Review transactions", preview, "primary");
   settingsActions.append(read, review);
   grid.append(label("Source", source), label("Ledger account", account), fileLabel,
-    label("Import name (optional)", importName), pdfMethodLabel, delimiterLabel, dateLabelNode, modeLabel);
+    label("Import name (optional)", importName), pdfMethodLabel, csvMethodLabel, delimiterLabel, dateLabelNode, modeLabel);
   settings.append(grid, info, ocrLabel, aiPanel, mappingPanel, settingsActions);
   const resultBox = element("div");
   resultBox.hidden = true;
@@ -415,7 +431,36 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
   let setup, headers, mapping = {}, sourceFile, encoded, result, previewName, busy = false, page = 0;
   let archiveRequest;
   let editingKey = false;
-  const controls = [source, account, file, importName, pdfMethod, consent, apiKey, delimiters, dates, amountMode, ocr];
+  let promptUndo;
+  const controls = [source, account, file, importName, pdfMethod, csvMethod, openaiModel, consent, apiKey, delimiters, dates, amountMode, ocr];
+  const promptPanel = element("details", "imports-prompt");
+  promptPanel.append(element("summary", "", "Edit table with a prompt"));
+  const promptForm = element("div", "imports-prompt-form");
+  const prompt = element("textarea");
+  prompt.maxLength = 2000;
+  prompt.rows = 2;
+  prompt.placeholder = "Example: Use DD-MM-YYYY for missing dates.";
+  const promptModel = select([], "");
+  const promptKey = textInput("", "OpenAI API key for table edits", "password");
+  promptKey.autocomplete = "off";
+  const promptKeyLabel = label("OpenAI API key", promptKey);
+  const promptKeyHint = element("small", "", "Quant saves this key after a successful OpenAI response.");
+  promptKeyLabel.append(promptKeyHint);
+  const promptStatus = element("p", "muted");
+  promptStatus.setAttribute("role", "status");
+  promptStatus.tabIndex = -1;
+  const promptApply = action("Send to OpenAI and edit draft", editWithPrompt, "secondary");
+  const undoEdit = action("Undo last prompt edit", undoPrompt, "text-button");
+  const promptActions = element("div", "imports-review-controls");
+  promptActions.append(promptApply, undoEdit);
+  const promptSettings = element("div", "imports-prompt-settings");
+  promptSettings.append(label("Model for table edits", promptModel), promptKeyLabel);
+  promptForm.append(label("Describe your edits", prompt), promptSettings,
+    element("p", "muted", "This sends your prompt, editable rows from every page, and available category and match options to OpenAI."),
+    promptActions, promptStatus);
+  promptPanel.append(promptForm);
+  prompt.addEventListener("input", updatePromptControls);
+  promptKey.addEventListener("input", updatePromptControls);
   function setStatus(text = "", tone = "") {
     status.textContent = text;
     status.hidden = !text;
@@ -426,8 +471,9 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     setStatus(error.name === "Error" ? error.message : apiMessage(error));
   }
 
-  function pdfProvider() {
-    return source.value === "pdf" ? pdfProviders[pdfMethod.value] : undefined;
+  function aiProvider() {
+    if (source.value === "pdf") return pdfProviders[pdfMethod.value];
+    if (source.value === "csv" && csvMethod.value === "openai") return csvOpenAi;
   }
 
   function defaultName() {
@@ -463,7 +509,7 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
   }
 
   async function storeKey(method) {
-    const provider = pdfProvider();
+    const provider = aiProvider();
     const ai = setup?.[provider?.settings];
     if (busy || !ai || (method === "PUT" && !ai.can_save_key)) return;
     const key = method === "PUT" ? apiKey.value.trim() : "";
@@ -492,7 +538,7 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
   }
 
   function keyAvailability() {
-    const provider = pdfProvider();
+    const provider = aiProvider();
     if (!provider) return false;
     const ai = setup?.[provider.settings];
     const draft = apiKey.value.trim();
@@ -523,28 +569,32 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
   }
 
   function updateAvailability() {
-    read.hidden = source.value !== "csv";
-    const provider = pdfProvider();
+    const provider = aiProvider();
+    const manualCsv = source.value === "csv" && !provider;
+    read.hidden = !manualCsv;
     const missingPdf = source.value === "pdf" && pdfMethod.value !== "openai" && setup && !setup.pdf_enabled;
     const keyUnavailable = keyAvailability();
     const needsConsent = Boolean(provider && (!consent.checked || keyUnavailable));
     const fileCount = file.files.length;
     read.disabled = busy || !fileCount;
     review.disabled = busy || !setup || !fileCount || !account.value || !!missingPdf
-      || needsConsent || (source.value === "csv" && !headers);
-    review.textContent = busy ? "Processing…" : provider ? "Extract and review with " + provider.name : "Review transactions";
+      || needsConsent || (manualCsv && !headers);
+    review.textContent = busy ? "Processing…" : provider === csvOpenAi ? "Map and review with OpenAI"
+      : provider ? "Extract and review with " + provider.name : "Review transactions";
   }
 
   function syncSource(initial = false) {
     const isCsv = source.value === "csv";
     const isPdf = source.value === "pdf";
-    const provider = pdfProvider();
+    const provider = aiProvider();
     const directPdf = isPdf && pdfMethod.value === "openai";
     modeLabel.hidden = dateLabelNode.hidden = source.value === "amazon" || !!provider;
     delimiterLabel.hidden = !isCsv;
     ocrLabel.hidden = !isPdf || directPdf || !setup?.ocr_enabled;
     pdfMethodLabel.hidden = !isPdf;
+    csvMethodLabel.hidden = !isCsv;
     aiPanel.hidden = !provider;
+    modelLabel.hidden = provider?.settings !== "openai";
     if (provider) {
       consentCopy.textContent = provider.consent;
       const name = provider.name + " API key";
@@ -577,13 +627,16 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
         : "Use a text-based PDF. Check every extracted date and amount against the statement. For a scan, run local OCR or ask your bank for a CSV.";
       if (directPdf || setup?.pdf_enabled) info.append(" Each original PDF is archived after extraction.");
     } else {
-      info.textContent = "Choose the account the statement belongs to. Map its date, description, and signed amount or debit and credit columns.";
+      info.textContent = provider === csvOpenAi
+        ? "OpenAI identifies the columns from a sample. Quant reads the full CSV into an editable review table."
+        : "Choose the account the statement belongs to. Map its date, description, and signed amount or debit and credit columns.";
     }
     if (!initial) discardPreview(true);
     updateAvailability();
   }
 
   function discardPreview(discardMapping = false) {
+    resetPrompt();
     result = null;
     previewName = null;
     resultBox.replaceChildren();
@@ -602,6 +655,7 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     busy = flag;
     for (const control of controls) control.disabled = flag;
     updateAvailability();
+    updatePromptControls();
     for (const control of mappingPanel.querySelectorAll("select")) control.disabled = flag;
   }
 
@@ -748,6 +802,9 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
   async function open({ reportError = true } = {}) {
     try {
       setup = await api(endpoint + "setup");
+      options(openaiModel, Object.entries(setup.openai_models), openaiModel.value || setup.openai_default_model);
+      options(promptModel, Object.entries(setup.openai_models), promptModel.value || setup.openai_default_model);
+      prompt.placeholder = "Example: Use " + setup.today.split("-").reverse().join("-") + " for missing dates.";
       options(account, setup.accounts.filter(item => item.kind !== "investment").map(item => [item.id, item.name]),
         account.value || setup.accounts.find(item => item.kind !== "investment")?.id,
         "Choose an account");
@@ -806,19 +863,25 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
   }
 
   let lastSamples = [];
+  function useCsvLayout(details) {
+    headers = details.headers;
+    mapping = details.mapping;
+    lastSamples = details.sample;
+    if (details.date_format) dates.value = details.date_format;
+    if (details.amount_mode) amountMode.value = details.amount_mode;
+    else if (mapping.amount === undefined && mapping.debit !== undefined && mapping.credit !== undefined) {
+      amountMode.value = "separate";
+    }
+    renderMapping(lastSamples);
+  }
+
   async function inspect() {
     if (busy) return;
     setStatus();
     setBusy(true);
     try {
       const details = await api(endpoint + "inspect", { method: "POST", data: await fileData() });
-      headers = details.headers;
-      mapping = details.mapping;
-      lastSamples = details.sample;
-      if (mapping.amount === undefined && mapping.debit !== undefined && mapping.credit !== undefined) {
-        amountMode.value = "separate";
-      }
-      renderMapping(lastSamples);
+      useCsvLayout(details);
     } catch (error) {
       showError(error);
     } finally {
@@ -848,13 +911,13 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
       expected_id: payment ? String(payment.id) : "",
       commitment: commitment ? commitment.id + "|" + commitment.date : "",
       other_account_id: "", person_id: "",
-      category_id: row.suggested_category_id != null ? String(row.suggested_category_id) : "",
+      category_id: row.suggested_category_id != null ? String(row.suggested_category_id) : "default",
     };
   }
 
   async function preview() {
     if (review.disabled) return;
-    const provider = pdfProvider();
+    const provider = aiProvider();
     const key = provider && !setup[provider.settings]?.saved_key ? apiKey.value.trim() : "";
     const approved = consent.checked;
     if (provider) {
@@ -868,18 +931,27 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     try {
       const input = { name, account_id: account.value };
       if (!provider) Object.assign(input, { date_format: dates.value, amount_mode: amountMode.value });
+      if (provider) input.ai_consent = approved;
+      if (provider?.settings === "openai") input.openai_model = openaiModel.value;
       if (source.value === "pdf") {
         input.pdf_method = pdfMethod.value;
-        if (provider) input.ai_consent = approved;
         await previewPdfs([...file.files], input, provider, key);
       } else {
-        if (source.value === "csv") input.mapping = Object.fromEntries(Object.entries(mapping).filter(([key]) =>
-          amountMode.value === "separate" ? !["amount", "direction"].includes(key) : !["debit", "credit"].includes(key)));
+        if (provider === csvOpenAi) {
+          input.csv_method = "openai";
+          if (key) input.api_key = key;
+        } else if (source.value === "csv") {
+          input.mapping = Object.fromEntries(Object.entries(mapping).filter(([field]) =>
+            amountMode.value === "separate" ? !["amount", "direction"].includes(field) : !["debit", "credit"].includes(field)));
+        }
         const response = await api(endpoint + "preview", { method: "POST", data: { ...await fileData(), ...input } });
+        if (provider && response.ai) setup[provider.settings] = response.ai;
         result = { ...response, name: response.name || name, rows: response.rows.map(row => normalize(row)) };
       }
       editingKey = false;
       page = 0;
+      resetPrompt();
+      promptModel.value = result.openai_model || openaiModel.value;
       loaded = true;
     } catch (error) {
       showError(error);
@@ -919,9 +991,38 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
         outcome.error = error.name === "Error" ? error.message : apiMessage(error);
       }
     }
-    result = { source: "pdf", name: input.name, pdf_method: input.pdf_method, notices: [], files: outcomes, rows: mergePdfRows(rows) };
+    result = { source: "pdf", name: input.name, pdf_method: input.pdf_method, openai_model: input.openai_model,
+      notices: [], files: outcomes, rows: mergePdfRows(rows) };
     setStatus();
     if (documents.size || input.pdf_method === "openai") void loadArchive();
+  }
+
+  function rowActions(row) {
+    const actions = [["create", result.source === "amazon" ? "Record charge" : "Record new"]];
+    if (!row.action) actions.unshift(["", "Choose action"]);
+    if (row.matches.some(item => !item.reconciled)) actions.push(["link", "Link existing"]);
+    if (result.source !== "amazon") {
+      if (row.commitments.length) actions.push(["commitment", "Match commitment"]);
+      if (row.expected.length) actions.push(["expected", "Scheduled settlement"]);
+      if (setup.accounts.length > 1) actions.push(["transfer", "Internal transfer"]);
+      if (setup.people.length) actions.push(["settle", "Shared settlement"]);
+    }
+    actions.push(["skip", "Skip row"]);
+    return actions;
+  }
+
+  function actionTargets(row, action) {
+    switch (action) {
+      case "link": return ["Existing transaction", row.matches.filter(item => !item.reconciled)
+        .map(item => [item.id, item.name + " · " + dateLabel(item.posted_on) + " · " + item.kind])];
+      case "transfer": return ["Other account", setup.accounts.filter(item => String(item.id) !== account.value)
+        .map(item => [item.id, item.name])];
+      case "settle": return ["Person", setup.people.map(person => [person.id, person.name + " (@" + person.tag + ")"])];
+      case "commitment": return ["Scheduled occurrence", row.commitments.map(item => [item.id + "|" + item.date,
+        item.name + " · " + dateLabel(item.date)])];
+      case "expected": return ["Scheduled settlement", row.expected.map(item => [item.id, "@" + item.tag + " · " + dateLabel(item.date)])];
+      default: return ["", []];
+    }
   }
 
   function actionFields(row, container, rowLabel, updateRow) {
@@ -930,28 +1031,23 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
       const prompt = key === "category_id" ? "No category" : "Choose " + heading.toLowerCase();
       const control = select([["", prompt], ...pairs], row[key]);
       control.setAttribute("aria-label", heading + " for " + rowLabel);
-      if (key === "category_id") control.disabled = !pairs.length;
       control.addEventListener("change", () => { row[key] = control.value; updateRow(); });
       container.append(control);
     }
-    if (row.action === "link") {
-      addChoices("Existing transaction", "entry_id", row.matches.filter(item => !item.reconciled)
-        .map(item => [item.id, item.name + " · " + dateLabel(item.posted_on) + " · " + item.kind]));
-    } else if (row.action === "transfer") {
-      addChoices("Other account", "other_account_id", setup.accounts.filter(item => String(item.id) !== account.value)
-        .map(item => [item.id, item.name]));
-    } else if (row.action === "settle") {
-      addChoices("Person", "person_id", setup.people.map(person => [person.id, person.name + " (@" + person.tag + ")"]));
-    } else if (row.action === "commitment") {
-      addChoices("Scheduled occurrence", "commitment", row.commitments.map(item => [item.id + "|" + item.date,
-        item.name + " · " + dateLabel(item.date)]));
-    } else if (row.action === "expected") {
-      addChoices("Scheduled settlement", "expected_id", row.expected.map(item => [item.id, "@" + item.tag + " · " + dateLabel(item.date)]));
+    const key = targetFields[row.action];
+    if (key) {
+      const [heading, pairs] = actionTargets(row, row.action);
+      addChoices(heading, key, pairs);
     } else if (row.action === "create") {
       const kind = /^\s*[−-]/.test(row.value) ? "expense" : "income";
       const map = new Map(setup.categories.map(item => [item.id, item]));
-      addChoices("Category", "category_id", setup.categories.filter(item => item.kind === kind)
-        .map(item => [item.id, categoryPath(item, map)]));
+      const categories = setup.categories.filter(item => item.kind === kind);
+      const defaultName = setup.default_categories[kind];
+      const existingDefault = categories.find(item => item.parent_id == null && item.name.toLowerCase() === defaultName.toLowerCase());
+      const choices = categories.map(item => [item.id, categoryPath(item, map)]);
+      if (!existingDefault) choices.unshift(["default", defaultName]);
+      else if (row.category_id === "default") row.category_id = String(existingDefault.id);
+      addChoices("Category", "category_id", choices);
     }
   }
 
@@ -1054,11 +1150,179 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     return issues;
   }
 
+  function updatePromptControls() {
+    const needsKey = !setup?.openai?.configured;
+    promptKeyLabel.hidden = !needsKey;
+    promptKeyHint.hidden = !setup?.openai?.can_save_key || setup.openai.saved_key;
+    for (const control of [prompt, promptKey, promptModel]) control.disabled = busy;
+    promptApply.disabled = busy || !prompt.value.trim() || (needsKey && !promptKey.value.trim());
+    promptApply.textContent = busy ? "Working…" : "Send to OpenAI and edit draft";
+    undoEdit.hidden = !promptUndo;
+    undoEdit.disabled = busy;
+  }
+
+  function resetPrompt() {
+    promptPanel.open = false;
+    prompt.value = promptKey.value = promptStatus.textContent = "";
+    promptUndo = undefined;
+  }
+
+  function keepManualEdit(row, line) {
+    if (!promptUndo?.changes.delete(row)) return;
+    promptUndo.preserved++;
+    line.classList.remove("imports-prompt-updated");
+    if (!promptUndo.changes.size && !promptUndo.reordered) promptUndo = undefined;
+    updatePromptControls();
+  }
+
+  function promptRow(row, index) {
+    const choices = {};
+    for (const action of Object.keys(matchFields)) {
+      const [, pairs] = actionTargets(row, action);
+      if (pairs.length) choices[action] = pairs;
+    }
+    return {
+      id: index + 1, posted_on: row.posted_on, name: row.name, amount: row.value,
+      category_id: row.category_id, action: row.action, target: row[targetFields[row.action]] || "",
+      currency: reviewedCurrency(row), reference: row.reference, source: sourceLabel(row), line: row.line,
+      ...(Object.keys(choices).length ? { choices } : {}),
+    };
+  }
+
+  function checkPromptChanges(row, edits, openingDate) {
+    const { amount, target, ...changes } = edits;
+    const invalid = message => { throw new Error("Row " + row.line + " · " + message); };
+    if (changes.posted_on) {
+      const parsed = new Date(changes.posted_on + "T00:00:00Z");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(changes.posted_on) || !Number.isFinite(parsed.getTime())
+        || parsed.toISOString().slice(0, 10) !== changes.posted_on
+        || changes.posted_on > setup.today || (openingDate && changes.posted_on < openingDate)) {
+        invalid("The proposed date is outside the account’s recorded period or invalid.");
+      }
+    }
+    if (changes.name !== undefined && ([...changes.name].length > 100 || /\0/.test(changes.name))) {
+      invalid("The proposed description is invalid or longer than 100 characters.");
+    }
+    if (amount !== undefined) {
+      const cents = parsedCents(amount);
+      if (amount !== "" && (!cents || cents <= -(2n ** 63n) || cents >= 2n ** 63n || amount.length > 28)) {
+        invalid("The proposed amount is invalid.");
+      }
+      changes.value = amount;
+    }
+    const category = changes.category_id ?? row.category_id;
+    if (category && category !== "default") {
+      const kind = parsedCents(amount ?? row.value) < 0n ? "expense" : "income";
+      const valid = setup.categories.some(item => String(item.id) === category && item.kind === kind);
+      if (!valid && changes.category_id !== undefined) invalid("The proposed category is unavailable for this transaction.");
+      if (!valid && amount !== undefined) changes.category_id = "default";
+    }
+    const action = changes.action ?? row.action;
+    if (!rowActions(row).some(([value]) => value === action)) invalid("The proposed action is unavailable.");
+    if (target !== undefined) {
+      const key = targetFields[action];
+      const [, allowed] = actionTargets(row, action);
+      if (!key || (target && !allowed.some(([id]) => String(id) === target))) invalid("The proposed match or destination is unavailable.");
+      changes[key] = target;
+    }
+    return changes;
+  }
+
+  function orderedRows(rows, sort) {
+    const { column, direction } = sort;
+    const read = column === "amount" ? row => parsedCents(row.value) : row => row[column];
+    return [...rows].sort((first, second) => {
+      const a = read(first);
+      const b = read(second);
+      if (a === null || a === "") return b === null || b === "" ? 0 : 1;
+      if (b === null || b === "") return -1;
+      const compared = typeof a === "bigint" ? Number(a > b) - Number(a < b) : a.localeCompare(b);
+      return direction === "desc" ? -compared : compared;
+    });
+  }
+
+  async function editWithPrompt() {
+    if (promptApply.disabled || !result) return;
+    const rows = result.reviewRows ?? result.rows;
+    const editableRows = new Map(rows.flatMap((row, index) => editable(row) ? [[index + 1, row]] : []));
+    if (!editableRows.size) return;
+    const data = {
+      ai_consent: true, prompt: prompt.value.trim(), openai_model: promptModel.value,
+      source: result.source, account_id: account.value,
+      rows: [...editableRows].map(([id, row]) => promptRow(row, id - 1)),
+    };
+    if (!setup.openai?.configured) data.api_key = promptKey.value.trim();
+    setBusy(true);
+    promptStatus.textContent = "Preparing edits…";
+    renderPreview();
+    try {
+      const response = await api(endpoint + "review-prompt", { method: "POST", data });
+      if (response.ai) setup.openai = response.ai;
+      const proposed = new Map();
+      for (const { rows: ids, ...fields } of response.updates) {
+        for (const id of ids ?? editableRows.keys()) {
+          const row = editableRows.get(id);
+          if (!row) throw new Error("An edit referred to a row outside the editable draft.");
+          const changes = proposed.get(row) ?? {};
+          for (const [field, value] of Object.entries(fields)) {
+            if (field in changes && changes[field] !== value) throw new Error("The prompt returned conflicting edits for the same cell.");
+            changes[field] = value;
+          }
+          proposed.set(row, changes);
+        }
+      }
+      const openingDate = setup.accounts.find(item => String(item.id) === account.value)?.opened_on;
+      const updates = new Map();
+      const changes = new Map();
+      for (const [row, edits] of proposed) {
+        const checked = Object.fromEntries(Object.entries(checkPromptChanges(row, edits, openingDate))
+          .filter(([field, value]) => row[field] !== value));
+        if (Object.keys(checked).length) {
+          updates.set(row, checked);
+          changes.set(row, Object.fromEntries(Object.keys(checked).map(field => [field, row[field]])));
+        }
+      }
+      for (const [row, edits] of updates) Object.assign(row, edits);
+      const sorted = response.sort ? orderedRows(rows, response.sort) : rows;
+      const reordered = sorted.some((row, index) => row !== rows[index]);
+      if (changes.size || reordered) {
+        promptUndo = { changes, order: result.reviewRows, reordered, preserved: 0 };
+        if (reordered) result.reviewRows = sorted;
+        const firstChanged = sorted.findIndex(row => changes.has(row));
+        page = firstChanged >= 0 ? Math.floor(firstChanged / pageSize) : 0;
+        prompt.value = "";
+      }
+      const count = changes.size ? "Updated " + countLabel(changes.size, "row") + "." : "";
+      const summary = [count, reordered ? "Sorted the table." : "",
+        !count && !reordered ? response.message || "No draft rows changed." : "", ...response.notices];
+      promptStatus.textContent = summary.filter(Boolean).join(" ");
+      if (setup.openai?.configured) promptKey.value = "";
+    } catch (error) {
+      promptStatus.textContent = error.message || apiMessage(error);
+    } finally {
+      setBusy(false);
+      renderPreview();
+      promptStatus.focus({ preventScroll: true });
+    }
+  }
+
+  function undoPrompt() {
+    if (busy || !result || !promptUndo) return;
+    for (const [row, changes] of promptUndo.changes) Object.assign(row, changes);
+    result.reviewRows = promptUndo.order;
+    promptStatus.textContent = "Undid the last prompt edit."
+      + (promptUndo.preserved ? " Rows you edited afterward kept their changes." : "");
+    promptUndo = undefined;
+    renderPreview();
+    promptStatus.focus({ preventScroll: true });
+  }
+
   function rowNode(row, index, updateDraft, updateSpending) {
     const line = element("tr");
     line.dataset.importRow = index;
+    if (promptUndo?.changes.has(row)) line.classList.add("imports-prompt-updated");
     const rowLabel = "row " + row.line + (row.origins?.[0] ? " in " + row.origins[0].file : "");
-    const immutable = row.existing != null || row.blocked;
+    const immutable = !editable(row);
     const date = textInput(row.posted_on, "Posting date for " + rowLabel, "date");
     date.max = setup.today;
     const name = textInput(row.name, "Description for " + rowLabel);
@@ -1066,18 +1330,7 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     const amount = textInput(row.value, "Signed amount for " + rowLabel);
     amount.inputMode = "decimal";
     amount.maxLength = 28;
-    const rowActions = [];
-    if (!row.action) rowActions.push(["", "Choose action"]);
-    rowActions.push(["create", result.source === "amazon" ? "Record charge" : "Record new"]);
-    if (row.matches.some(item => !item.reconciled)) rowActions.push(["link", "Link existing"]);
-    if (result.source !== "amazon") {
-      if (row.commitments.length) rowActions.push(["commitment", "Match commitment"]);
-      if (row.expected.length) rowActions.push(["expected", "Scheduled settlement"]);
-      if (setup.accounts.length > 1) rowActions.push(["transfer", "Internal transfer"]);
-      if (setup.people.length) rowActions.push(["settle", "Shared settlement"]);
-    }
-    rowActions.push(["skip", "Skip row"]);
-    const treatment = select(rowActions, row.action);
+    const treatment = select(rowActions(row), row.action);
     treatment.setAttribute("aria-label", "Action for " + rowLabel);
     treatment.disabled = busy;
     const extra = element("td", "imports-review-target");
@@ -1119,6 +1372,7 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     const reviewCell = element("td", "imports-review-state");
     reviewCell.append(issueNode, toggle);
     const updateMatch = () => {
+      keepManualEdit(row, line);
       compareMatch(row, comparison);
       updateDraft();
     };
@@ -1139,9 +1393,9 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     amount.addEventListener("change", () => {
       const category = setup.categories.find(item => String(item.id) === row.category_id);
       if (category && category.kind !== (parsedCents(row.value) < 0n ? "expense" : "income")) {
-        row.category_id = "";
-        updateAction();
+        row.category_id = "default";
       }
+      if (row.action === "create") updateAction();
     });
     treatment.addEventListener("change", () => {
       row.action = treatment.value;
@@ -1169,7 +1423,7 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     const [rule, due] = row.commitment.split("|");
     return {
       token: row.token, line: row.line, action: row.action, amount: row.value,
-      name: row.name, posted_on: row.posted_on, category_id: row.category_id,
+      name: row.name, posted_on: row.posted_on, category_id: row.action === "create" ? row.category_id : "",
       entry_id: row.entry_id ? Number(row.entry_id) : null, rule_id: rule, due_on: due,
       expected_id: row.expected_id, other_account_id: row.other_account_id, person_id: row.person_id,
       currency_confirmed: row.currency_unconfirmed && row.currency_confirmed ? true : undefined,
@@ -1311,11 +1565,15 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     downloadStatus.setAttribute("role", "status");
     const spending = element("section", "imports-spending");
     const updateSpending = () => { if (result.source === "pdf") renderPdfSpending(spending, result.rows); };
-    const rows = result.rows;
+    const rows = result.reviewRows ?? result.rows;
     const pages = Math.ceil(rows.length / pageSize);
     if (rows.length) {
       section.append(element("p", "muted imports-explanation",
         "Edit cells as needed, then import the table. To leave out a transaction, choose Skip row in its Action menu."));
+      if (rows.some(editable)) {
+        updatePromptControls();
+        section.append(promptPanel);
+      }
       const table = element("table", "imports-review-table");
       table.setAttribute("aria-label", "Transactions to review");
       const tableHeading = element("tr");
@@ -1430,11 +1688,22 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
   source.addEventListener("change", () => {
     file.value = "";
     pdfMethod.value = "local";
+    csvMethod.value = "local";
     resetAiDraft();
     syncSource();
   });
   file.addEventListener("change", () => { resetConsent(); discardPreview(true); updateAvailability(); });
   pdfMethod.addEventListener("change", () => { resetAiDraft(); syncSource(); });
+  csvMethod.addEventListener("change", () => {
+    const suggested = result?.csv_layout;
+    resetAiDraft();
+    syncSource();
+    if (csvMethod.value === "local" && suggested) {
+      useCsvLayout(suggested);
+      updateAvailability();
+    }
+  });
+  openaiModel.addEventListener("change", () => discardPreview());
   consent.addEventListener("change", updateAvailability);
   apiKey.addEventListener("input", updateAvailability);
   importName.addEventListener("input", () => {
