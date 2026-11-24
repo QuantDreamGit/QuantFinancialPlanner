@@ -62,7 +62,8 @@ const map = moneyFlow({
   addEntry: openTransaction, editEntry: editTransaction,
   addCategory: openCategory, viewEntries: showTransactions,
 });
-const editor = ledgerEditor({ ledger: () => realLedger, notify, refresh });
+const categoryChanges = typeof BroadcastChannel === "function" ? new BroadcastChannel("quant-category-changes") : null;
+const editor = ledgerEditor({ ledger: () => realLedger, notify, refresh, onCategoryChange: categoriesChanged });
 const openTransactionFiles = transactionFilesDialog({ notify, onChange: refresh });
 const planner = setupPlanner({ notify, checkFunding: openFunding });
 const forecast = setupForecast($("#view-forecast"), { notify, onChange: refreshAfterLedgerChange, checkFunding: openFunding });
@@ -145,6 +146,11 @@ async function switchMode(sample) {
 
 function refreshAfterLedgerChange() {
   return sampleMode === true ? switchMode(false) : refresh();
+}
+
+function categoriesChanged() {
+  categoryChanges?.postMessage(workspaceId());
+  void imports.refreshCategories();
 }
 
 async function useRealData() {
@@ -660,6 +666,7 @@ async function addStarterCategories(event) {
   try {
     if (!await useRealData()) return;
     const result = await api("/api/categories/starter", { method: "POST", data: {} });
+    if (result.added) categoriesChanged();
     await refreshAfterLedgerChange();
     notify(result.added ? result.added + (result.added === 1 ? " starter category added." : " starter categories added.")
       : "Starter categories are already available.");
@@ -775,6 +782,12 @@ filters.elements.search.addEventListener("input", () => {
 });
 $(".skip-link").addEventListener("click", event => { event.preventDefault(); $("#main").focus(); });
 window.addEventListener("hashchange", navigate);
+window.addEventListener("focus", () => {
+  if (activeView === "imports") void imports.refreshCategories();
+});
+categoryChanges?.addEventListener("message", event => {
+  if (event.data === workspaceId()) void imports.refreshCategories();
+});
 window.addEventListener("sessionexpired", () => location.replace(signInHref()));
 window.addEventListener("pageshow", event => {
   if (event.persisted) location.reload();

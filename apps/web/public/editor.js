@@ -316,6 +316,7 @@ export function ledgerEditor(actions) {
       }
     }
     if (!after || deleting) dialog.close();
+    if (resource === "category") actions.onCategoryChange?.();
     actions.notify((resource[0].toUpperCase() + resource.slice(1)) + (deleting ? " deleted." : " saved."));
     try {
       const refreshed = await actions.refresh();

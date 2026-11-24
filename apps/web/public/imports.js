@@ -432,6 +432,9 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
   let archiveRequest;
   let editingKey = false;
   let promptUndo;
+  let categoryRequest = 0, appliedCategoryRequest = 0;
+  let categoryMap = new Map();
+  let updateDraftCategories;
   const controls = [source, account, file, importName, pdfMethod, csvMethod, openaiModel, consent, apiKey, delimiters, dates, amountMode, ocr];
   const promptPanel = element("details", "imports-prompt");
   promptPanel.append(element("summary", "", "Edit table with a prompt"));
@@ -639,6 +642,7 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     resetPrompt();
     result = null;
     previewName = null;
+    updateDraftCategories = undefined;
     resultBox.replaceChildren();
     resultBox.hidden = true;
     settings.hidden = false;
@@ -799,9 +803,34 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     return details;
   }
 
-  async function open({ reportError = true } = {}) {
+  function updateCategories({ categories, default_categories }, request) {
+    if (request < appliedCategoryRequest) return;
+    appliedCategoryRequest = request;
+    const changed = JSON.stringify(categories) !== JSON.stringify(setup.categories)
+      || JSON.stringify(default_categories) !== JSON.stringify(setup.default_categories);
+    setup.categories = categories;
+    setup.default_categories = default_categories;
+    if (!changed) return;
+    categoryMap = new Map(categories.map(item => [item.id, item]));
+    updateDraftCategories?.();
+  }
+
+  async function refreshCategories() {
+    if (!result) return;
+    const request = ++categoryRequest;
     try {
-      setup = await api(endpoint + "setup");
+      updateCategories(await api(endpoint + "setup"), request);
+    } catch {
+      // Keep the current choices if refreshing fails.
+    }
+  }
+
+  async function open({ reportError = true } = {}) {
+    const request = ++categoryRequest;
+    try {
+      const { categories, default_categories, ...next } = await api(endpoint + "setup");
+      setup = { ...setup, ...next };
+      updateCategories({ categories, default_categories }, request);
       options(openaiModel, Object.entries(setup.openai_models), openaiModel.value || setup.openai_default_model);
       options(promptModel, Object.entries(setup.openai_models), promptModel.value || setup.openai_default_model);
       prompt.placeholder = "Example: Use " + setup.today.split("-").reverse().join("-") + " for missing dates.";
@@ -1027,11 +1056,27 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     }
   }
 
+  function setCategoryOptions(control, row) {
+    const kind = parsedCents(row.value) < 0n ? "expense" : "income";
+    const categories = setup.categories.filter(item => item.kind === kind);
+    const defaultName = setup.default_categories[kind];
+    const existingDefault = categories.find(item => item.parent_id == null && item.name.toLowerCase() === defaultName.toLowerCase());
+    const choices = categories.map(item => [item.id, categoryPath(item, categoryMap)]);
+    const defaultId = existingDefault ? String(existingDefault.id) : "default";
+    if (!existingDefault) choices.unshift([defaultId, defaultName]);
+    const selected = row.category_id === "default" ? defaultId : row.category_id;
+    if (selected && !choices.some(([id]) => String(id) === selected)) {
+      choices.push([selected, "Category unavailable"]);
+    }
+    options(control, choices, selected, "No category");
+  }
+
   function actionFields(row, container, rowLabel, updateRow) {
     container.replaceChildren();
     function addChoices(heading, key, pairs) {
-      const prompt = key === "category_id" ? "No category" : "Choose " + heading.toLowerCase();
-      const control = select([["", prompt], ...pairs], row[key]);
+      const control = element("select");
+      if (key === "category_id") setCategoryOptions(control, row);
+      else options(control, pairs, row[key], "Choose " + heading.toLowerCase());
       control.setAttribute("aria-label", heading + " for " + rowLabel);
       control.addEventListener("change", () => { row[key] = control.value; updateRow(); });
       container.append(control);
@@ -1041,15 +1086,7 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
       const [heading, pairs] = actionTargets(row, row.action);
       addChoices(heading, key, pairs);
     } else if (row.action === "create") {
-      const kind = /^\s*[−-]/.test(row.value) ? "expense" : "income";
-      const map = new Map(setup.categories.map(item => [item.id, item]));
-      const categories = setup.categories.filter(item => item.kind === kind);
-      const defaultName = setup.default_categories[kind];
-      const existingDefault = categories.find(item => item.parent_id == null && item.name.toLowerCase() === defaultName.toLowerCase());
-      const choices = categories.map(item => [item.id, categoryPath(item, map)]);
-      if (!existingDefault) choices.unshift(["default", defaultName]);
-      else if (row.category_id === "default") row.category_id = String(existingDefault.id);
-      addChoices("Category", "category_id", choices);
+      addChoices("Category", "category_id");
     }
   }
 
@@ -1113,6 +1150,10 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     if (!row.name.trim()) return "Enter a description.";
     const cents = parsedCents(row.value);
     if (!cents || cents <= -(2n ** 63n) || cents >= 2n ** 63n) return "Enter a nonzero euro amount with up to two decimal places.";
+    if (row.action === "create" && row.category_id && row.category_id !== "default"
+      && categoryMap.get(Number(row.category_id))?.kind !== (cents < 0n ? "expense" : "income")) {
+      return "Choose an available category.";
+    }
     if (row.currency_unconfirmed && !row.currency_confirmed) return "Confirm the currency is EUR.";
     if (row.action === "create" && result.source === "amazon" && cents > 0n) return "Enter a negative amount for the confirmed charge.";
     if (row.action === "transfer" && !row.other_account_id) return "Choose the other account.";
@@ -1394,7 +1435,10 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
       if (category && category.kind !== (parsedCents(row.value) < 0n ? "expense" : "income")) {
         row.category_id = "default";
       }
-      if (row.action === "create") updateAction();
+      if (row.action === "create") {
+        updateAction();
+        updateDraft();
+      }
     });
     treatment.addEventListener("change", () => {
       row.action = treatment.value;
@@ -1408,7 +1452,10 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     const choice = immutable ? element("span", "muted", row.blocked ? "Excluded" : "Already handled") : treatment;
     line.append(element("td", "imports-review-date", date), element("td", "imports-review-name", name),
       element("td", "imports-review-amount", amount), element("td", "imports-review-action", choice), extra, reviewCell);
-    return { line, details, showIssue(issue) {
+    return { line, details, refreshCategory() {
+      const control = extra.querySelector("select");
+      if (row.action === "create" && control) setCategoryOptions(control, row);
+    }, showIssue(issue) {
       line.classList.toggle("imports-review-excluded", !included(row));
       issueNode.classList.toggle("imports-review-invalid", Boolean(issue));
       const hasWarning = warnings.length || row.overlap || row.matchOverlap;
@@ -1544,6 +1591,7 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
 
   function renderPreview() {
     if (!result) return;
+    updateDraftCategories = undefined;
     const section = panel("Review transactions");
     const heading = section.firstElementChild;
     heading.tabIndex = -1;
@@ -1643,6 +1691,10 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
         for (const [i, entry] of entries.entries()) entry.showIssue(issues.get(visible[i]));
       }
       updateDraft();
+      updateDraftCategories = () => {
+        for (const entry of entries) entry.refreshCategory();
+        updateDraft();
+      };
       section.append(historyNotice, toolbar, scroll);
       if (pages > 1) {
         const pagination = element("div", "pagination");
@@ -1724,6 +1776,7 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
   syncSource(true);
   return {
     open,
+    refreshCategories,
     pendingReview: () => result?.rows.filter(included).length ?? 0,
   };
 }
