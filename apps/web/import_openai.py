@@ -119,6 +119,7 @@ Return minimal cell changes, preserving values and rows outside the user's instr
 Use row IDs from the input. Group rows receiving identical edits. Use null for rows only when the same edit applies to every supplied row.
 For each update, use null for an unchanged field. Use an empty string to clear a field only when the user requests it.
 Only change dates and amounts as requested. Use YYYY-MM-DD dates. Interpret a day-month-year date in the instruction as day first.
+Dates before the account's opening date are allowed. Do not use a date after today.
 Use signed decimal amounts in euros with no thousands separators. Preserve debit and credit signs unless asked to change them.
 Use one of the supplied category IDs, "default" for the default category, or "" for no category.
 Use skip to leave a transaction out of an import and create to record it as a new transaction.

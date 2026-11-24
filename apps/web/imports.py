@@ -626,7 +626,7 @@ def _review_prompt(database, data, today, key_store, user_id):
             }
         rows.append({"id": row["id"], **fields})
     with database.connection(snapshot=True) as conn:
-        account = _set_account(conn, account_id)
+        _set_account(conn, account_id)
         categories = [dict(row) for row in conn.execute("""
             SELECT id, name, kind, parent_id FROM categories WHERE id > 0 AND kind IN ('income', 'expense') ORDER BY name
         """)]
@@ -635,7 +635,7 @@ def _review_prompt(database, data, today, key_store, user_id):
             "settle": [list(row) for row in conn.execute("SELECT id, name FROM shared_people WHERE id > 0")],
         }
     context = {"rows": rows, "categories": categories, "default_categories": DEFAULT_IMPORT_CATEGORIES,
-               "targets": targets, "source_type": source, "today": today.isoformat(), "account_opened_on": account["opened_on"]}
+               "targets": targets, "source_type": source, "today": today.isoformat()}
     api_key, remember_key = _ai_key(data, key_store, user_id, validate_openai_key)
     result = suggest_review_edits(prompt, context, api_key=api_key, model=model)
     notices = []
@@ -883,8 +883,8 @@ def _preview(database, data, today, *, key_store=None, user_id=None):
                 if csv_openai and "date" not in mapping:
                     raise ApiError("No posting date column was identified.", "date")
                 posted = parse_date(value, date_order)
-                if posted > today or posted.isoformat() < account["opened_on"]:
-                    errors.append("Date falls outside the account’s recorded period.")
+                if posted > today:
+                    errors.append("Enter today’s date or an earlier calendar date.")
             except ApiError as error:
                 errors.append(str(error))
             try:
@@ -1089,6 +1089,14 @@ def _default_import_category(conn, kind):
     """, (kind, name)).lastrowid
 
 
+def _extend_import_history(conn, posted, account_id, destination_id=None):
+    owned_account(account_id)
+    owned_account(destination_id, "destination_id")
+    conn.execute("""
+        UPDATE accounts SET opened_on = ? WHERE id IN (?, ?) AND opened_on > ?
+    """, (posted, account_id, destination_id, posted))
+
+
 def _make_entry(database, conn, today, pending, ledger, scope):
     source, account_id, _, reference, blocked, _, currency_unconfirmed, *_ = scope
     if blocked:
@@ -1105,9 +1113,7 @@ def _make_entry(database, conn, today, pending, ledger, scope):
     category_value = pending.get("category_id", "default" if action == "create" else None)
     default_category = action == "create" and category_value == "default"
     category = None if default_category else identifier(category_value, "category_id")
-    account = _set_account(conn, account_id)
-    if posted < account["opened_on"]:
-        raise ApiError("The import date must be on or after the account opening date.", "posted_on")
+    _set_account(conn, account_id)
     note = "Amazon order " + reference if source == "amazon" and reference else ""
     labels = ["amazon"] if source == "amazon" else []
     if action == "link":
@@ -1128,8 +1134,10 @@ def _make_entry(database, conn, today, pending, ledger, scope):
         plans = list(_expected_status(conn))
         if not any(row["id"] == expected for row in _expected_matches(plans, day, cents, account_id)):
             raise ApiError("The scheduled settlement no longer matches. Review the file again.", status=409)
+        _extend_import_history(conn, posted, account_id)
         return -2 * _record_expected(conn, expected, {"posted_on": posted}, today) - 1, action
     if action == "settle":
+        _extend_import_history(conn, posted, account_id)
         settlement_id = _settle(conn, {
             "person_id": pending.get("person_id"), "account_id": account_id, "posted_on": posted,
             "amount": euros(abs(cents)), "direction": "receive" if cents > 0 else "pay", "note": name,
@@ -1157,6 +1165,7 @@ def _make_entry(database, conn, today, pending, ledger, scope):
             "kind": kind, "name": name, "posted_on": posted, "amount": euros(abs(cents)),
             "account_id": account_id, "category_id": _default_import_category(conn, kind) if default_category else category,
         }
+    _extend_import_history(conn, posted, entry["account_id"], entry.get("destination_id"))
     entry_id = database.save_entry(dict(entry, note=note, labels=labels), today, conn=conn)
     if action == "commitment":
         post_occurrence(database, {"rule_id": rule_id, "date": due, "entry_id": entry_id}, today, conn=conn)

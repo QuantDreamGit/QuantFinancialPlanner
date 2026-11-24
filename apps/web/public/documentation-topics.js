@@ -152,7 +152,7 @@ export const topicGroups = [
             title: "Create accounts and opening balances",
             copy: [
               "In Manage → Accounts, add checking, cash, savings, or investment accounts in euros. Enter the balance immediately before the first transactions you intend to record and use an opening date that covers that history.",
-              "If you later bring in older records, update the opening date and opening balance together. An opening balance should exclude the activity you will import or record after that starting point.",
+              "Import payments can extend an account’s opening date to include earlier transactions. The opening balance applies before the earliest transaction and should exclude the activity you import.",
             ],
           },
           {

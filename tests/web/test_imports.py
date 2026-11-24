@@ -170,6 +170,41 @@ class ImportsTests(unittest.TestCase):
             self.commit(self.decide(rows[0], posted_on="2026-11-16"))
         self.assertEqual(self.commit(self.decide(rows[0], posted_on="2026-11-16", amount="-4.80"))["saved"], 1)
 
+    def test_backdated_import_extends_history_only_on_successful_commit(self):
+        account = self.account("New checking", "checking")
+        self.db.save_account({"name": "New checking", "opening_balance": "500", "opened_on": TODAY.isoformat()}, TODAY, account)
+        rows = self.preview(self.input("Date,Description,Amount\n2026-11-16,Fare,-8.50\n2026-11-18,Refund,4.25\n",
+                                       account_id=account))["rows"]
+
+        def account_snapshot():
+            return next(item for item in self.db.ledger().accounts if item["id"] == account)
+
+        self.assertEqual([row["errors"] for row in rows], [[], []])
+        self.assertEqual(account_snapshot()["opened_on"], TODAY.isoformat())
+        with self.assertRaises(ApiError):
+            self.commit(self.decide(rows[0]), self.decide(rows[1], posted_on="2026-11-21"))
+        self.assertEqual(account_snapshot()["opened_on"], TODAY.isoformat())
+        self.assertEqual(self.db.ledger().entries, [])
+
+        edits = (self.decide(rows[0], verify_ready=True), self.decide(rows[1], posted_on="2026-11-12"))
+        self.assertEqual(self.commit(*edits)["saved"], 2)
+        saved = account_snapshot()
+        self.assertEqual((saved["opened_on"], saved["opening_balance"]), ("2026-11-12", 50_000))
+        report = dashboard(self.db.ledger(), "ALL", TODAY)
+        self.assertEqual(next(item["balance"] for item in report["accounts"] if item["id"] == account), "49575")
+        self.assertEqual(self.commit(*edits)["already"], 2)
+        self.assertEqual(account_snapshot(), saved)
+
+    def test_backdated_transfer_extends_both_accounts(self):
+        for account, name in ((self.checking, "Checking"), (self.savings, "Savings")):
+            self.db.save_account({"name": name, "opening_balance": "500", "opened_on": "2026-11-19"}, TODAY, account)
+        row = self.preview(self.input("Date,Description,Amount\n2026-11-16,Move to savings,-50\n"))["rows"][0]
+        self.commit(self.decide(row, "transfer", other_account_id=self.savings))
+        report = dashboard(self.db.ledger(), "ALL", TODAY)
+        self.assertEqual({item["id"]: (item["opened_on"], item["balance"]) for item in report["accounts"]}, {
+            self.checking: ("2026-11-16", "45000"), self.savings: ("2026-11-16", "55000"),
+        })
+
     def test_review_prompt_sends_editable_fields_and_never_writes_to_the_ledger(self):
         category = self.db.save_category({"kind": "expense", "name": "Groceries", "color": "mint"})
         data = {
@@ -405,7 +440,7 @@ class ImportsTests(unittest.TestCase):
     def test_commit_is_atomic_on_invalid_date_and_token_tampering(self):
         rows = self.preview(self.input("Date,Description,Amount\n2026-11-13,First,-1\n2026-11-14,Second,-2\n"))["rows"]
         with self.assertRaisesRegex(ApiError, "Row 3"):
-            self.commit(self.decide(rows[0]), self.decide(rows[1], posted_on="2025-12-31"))
+            self.commit(self.decide(rows[0]), self.decide(rows[1], posted_on="2026-11-21"))
         self.assertEqual(self.db.ledger().entries, [])
         self.assertEqual(self.api("/setup")["history"], [])
         with self.assertRaisesRegex(ApiError, "Review the file again"):

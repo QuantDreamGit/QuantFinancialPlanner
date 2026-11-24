@@ -1107,10 +1107,9 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     container.append(statement, existing);
   }
 
-  function reviewIssue(row, openingDate) {
+  function reviewIssue(row) {
     if (!row.action) return "Choose how to record or match this transaction.";
     if (!row.posted_on || row.posted_on > setup.today) return "Enter a date on or before " + dateLabel(setup.today) + ".";
-    if (openingDate && row.posted_on < openingDate) return "Enter a date on or after " + dateLabel(openingDate) + ".";
     if (!row.name.trim()) return "Enter a description.";
     const cents = parsedCents(row.value);
     if (!cents || cents <= -(2n ** 63n) || cents >= 2n ** 63n) return "Enter a nonzero euro amount with up to two decimal places.";
@@ -1131,7 +1130,6 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     const issues = new Map();
     const fingerprints = new Map();
     const targets = new Map();
-    const openingDate = setup.accounts.find(item => String(item.id) === account.value)?.opened_on;
     function checkDuplicate(index, key, row, issue) {
       if (index.has(key)) {
         issues.set(index.get(key), issue);
@@ -1141,7 +1139,7 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
       }
     }
     for (const row of rows) {
-      const issue = reviewIssue(row, openingDate);
+      const issue = reviewIssue(row);
       if (issue) issues.set(row, issue);
       if (row.review_key) checkDuplicate(fingerprints, row.review_key, row, "Choose Skip row on repeated copies of this transaction.");
       const field = matchFields[row.action];
@@ -1192,15 +1190,14 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
     };
   }
 
-  function checkPromptChanges(row, edits, openingDate) {
+  function checkPromptChanges(row, edits) {
     const { amount, target, ...changes } = edits;
     const invalid = message => { throw new Error("Row " + row.line + " · " + message); };
     if (changes.posted_on) {
       const parsed = new Date(changes.posted_on + "T00:00:00Z");
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(changes.posted_on) || !Number.isFinite(parsed.getTime())
-        || parsed.toISOString().slice(0, 10) !== changes.posted_on
-        || changes.posted_on > setup.today || (openingDate && changes.posted_on < openingDate)) {
-        invalid("The proposed date is outside the account’s recorded period or invalid.");
+      if (!/^(?!0000)\d{4}-\d{2}-\d{2}$/.test(changes.posted_on) || !Number.isFinite(parsed.getTime())
+        || parsed.toISOString().slice(0, 10) !== changes.posted_on || changes.posted_on > setup.today) {
+        invalid("Enter today’s date or an earlier calendar date.");
       }
     }
     if (changes.name !== undefined && ([...changes.name].length > 100 || /\0/.test(changes.name))) {
@@ -1274,11 +1271,10 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
           proposed.set(row, changes);
         }
       }
-      const openingDate = setup.accounts.find(item => String(item.id) === account.value)?.opened_on;
       const updates = new Map();
       const changes = new Map();
       for (const [row, edits] of proposed) {
-        const checked = Object.fromEntries(Object.entries(checkPromptChanges(row, edits, openingDate))
+        const checked = Object.fromEntries(Object.entries(checkPromptChanges(row, edits))
           .filter(([field, value]) => row[field] !== value));
         if (Object.keys(checked).length) {
           updates.set(row, checked);
@@ -1594,6 +1590,9 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
       const toolbar = element("div", "imports-review-toolbar");
       const summary = element("p", "imports-review-count");
       summary.setAttribute("role", "status");
+      const historyNotice = element("p", "muted imports-explanation",
+        "Importing the earlier transactions will move the affected accounts’ opening dates back. Their opening balances will apply before those transactions.");
+      const openingDates = new Map(setup.accounts.map(item => [String(item.id), item.opened_on]));
       const controls = element("div", "imports-review-controls");
       const submit = action("", commit, "primary");
       const confirmCurrency = action("", () => {
@@ -1623,6 +1622,9 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
       function updateDraft() {
         const pending = rows.filter(included);
         issues = draftIssues(pending);
+        historyNotice.hidden = !pending.some(row =>
+          row.action && row.action !== "link" && row.posted_on && (row.posted_on < openingDates.get(account.value)
+            || (row.action === "transfer" && row.posted_on < openingDates.get(row.other_account_id))));
         const unknown = pending.filter(row => row.currency_unconfirmed && !row.currency_confirmed).length;
         const handled = rows.filter(row => row.existing != null).length;
         const skipped = rows.length - pending.length - handled;
@@ -1641,7 +1643,7 @@ export function setupImports(root, { notify = () => {}, onChange = () => {} } = 
         for (const [i, entry] of entries.entries()) entry.showIssue(issues.get(visible[i]));
       }
       updateDraft();
-      section.append(toolbar, scroll);
+      section.append(historyNotice, toolbar, scroll);
       if (pages > 1) {
         const pagination = element("div", "pagination");
         const range = element("span", "", (start + 1) + "–" + (start + visible.length) + " of " + rows.length);
